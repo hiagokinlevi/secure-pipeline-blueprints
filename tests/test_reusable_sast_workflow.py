@@ -53,5 +53,5 @@ def test_reusable_sast_workflow_runs_semgrep_and_uploads_sarif():
     assert "github/codeql-action/upload-sarif@v3" in uses_values
 
     semgrep_step = next(step for step in steps if step.get("id") == "semgrep")
-    assert semgrep_step["continue-on-error"] == "${{ !inputs.fail_on_findings }}"
+    assert semgrep_step["continue-on-error"] == "${{ inputs.fail_on_findings == false }}"
     assert semgrep_step["with"]["generateSarif"] == "1"
