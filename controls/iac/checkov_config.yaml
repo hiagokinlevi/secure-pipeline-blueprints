@@ -1,0 +1,113 @@
+# =============================================================================
+# Checkov Configuration — secure-pipeline-blueprints
+# =============================================================================
+# Configures Checkov's behavior when scanning Terraform and other IaC.
+# This configuration establishes a baseline security posture that balances
+# security coverage with practical false positive management.
+#
+# Usage:
+#   checkov -d . --config-file controls/iac/checkov_config.yaml
+#
+# Or in GitHub Actions via bridgecrewio/checkov-action:
+#   config_file: controls/iac/checkov_config.yaml
+#
+# Documentation:
+#   https://www.checkov.io/2.Basics/CLI%20Command%20Reference.html
+# =============================================================================
+
+# Output configuration
+compact: true       # Compact output — less verbose, easier to read in CI
+quiet: false        # Show all output (set to true to only show failures)
+output:
+  - sarif           # SARIF output for GitHub Security tab integration
+  - cli             # Human-readable output in CI logs
+
+# Scan framework(s) — add more as you adopt additional IaC tools
+framework:
+  - terraform
+  - terraform_plan  # Also scan Terraform plan JSON output if available
+
+# ---------------------------------------------------------------------------
+# Severity Thresholds
+# ---------------------------------------------------------------------------
+# hard-fail-on: fail the CI pipeline on these severity levels
+# soft-fail-on: report but do not fail on these severity levels
+# Note: Start with CRITICAL-only, then add HIGH after initial hardening
+
+hard-fail-on:
+  - CRITICAL  # Always fail on critical misconfigurations (e.g., S3 public access, unencrypted secrets)
+
+soft-fail-on:
+  - HIGH       # Report HIGH findings — set to hard-fail after fixing existing findings
+  - MEDIUM     # Report MEDIUM findings
+  - LOW        # Report LOW findings (informational)
+
+# ---------------------------------------------------------------------------
+# Checks to Skip
+# ---------------------------------------------------------------------------
+# Skip specific check IDs that are known false positives or not applicable.
+# Document the reason for each skip — do not skip without justification.
+
+skip-check:
+  # CKV_AWS_18 — S3 Access Logging: Skip if you're using S3 access points or
+  # centralized logging via CloudTrail. Re-enable once you have a logging strategy.
+  # - CKV_AWS_18
+
+  # CKV_AWS_144 — S3 Cross-Region Replication: Skip for non-production or
+  # non-critical buckets. Enable for production data buckets.
+  # - CKV_AWS_144
+
+  # CKV2_AWS_6 — S3 Block Public ACLs: Only skip if bucket intentionally serves public content.
+  # - CKV2_AWS_6
+
+  # CKV_TF_1 — Ensure Terraform module sources use a commit hash:
+  # Skip if you pin to tagged versions instead. Comment out to enforce commit pinning.
+  - CKV_TF_1  # Allow module pinning via git tags (not just commit SHAs)
+
+# ---------------------------------------------------------------------------
+# Directories and Files to Include/Exclude
+# ---------------------------------------------------------------------------
+
+# Directories to scan (default: current directory)
+# directory:
+#   - .
+
+# Files to skip during scanning
+skip-path:
+  - ".terraform/"         # Terraform provider cache — auto-generated, not our code
+  - "*.tfstate"           # Terraform state files — contain sensitive data, not source
+  - "*.tfstate.backup"
+  - "examples/"           # Example modules — may intentionally use insecure configs for demo
+  - "tests/"              # Test fixtures — may use relaxed configs for unit testing
+
+# ---------------------------------------------------------------------------
+# Custom Policies Directory
+# ---------------------------------------------------------------------------
+# If you have custom Checkov policies, specify the directory here.
+# custom-policies-dir: controls/iac/checkov-custom-policies/
+
+# ---------------------------------------------------------------------------
+# External Checks
+# ---------------------------------------------------------------------------
+# Optionally load external check repositories (e.g., Bridgecrew platform checks)
+# external-checks-git:
+#   - git_url: https://github.com/my-org/custom-checkov-checks
+#     branch: main
+#     inner_dir: checks/
+
+# ---------------------------------------------------------------------------
+# Secrets Scanning
+# ---------------------------------------------------------------------------
+# Enable built-in secrets scanning in addition to IaC misconfiguration checks
+# Note: Use Gitleaks for comprehensive secrets scanning — Checkov provides
+# a secondary layer specifically for IaC files.
+enable-secrets-scan: true
+
+# ---------------------------------------------------------------------------
+# Baseline File
+# ---------------------------------------------------------------------------
+# After an initial scan, create a baseline to suppress pre-existing findings.
+# New findings (added after baseline creation) will still fail the build.
+# Create baseline: checkov -d . --create-baseline
+# Use baseline: specify it here
+# baseline: .checkov.baseline

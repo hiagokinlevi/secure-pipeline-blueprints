@@ -1,0 +1,213 @@
+# =============================================================================
+# Secure Python Pipeline Blueprint — GitLab CI
+# secure-pipeline-blueprints
+# =============================================================================
+# This GitLab CI pipeline implements a security-first workflow for Python apps.
+#
+# Security controls included:
+#   - Dependency installation with hash verification (--require-hashes)
+#   - Lint via ruff
+#   - Unit tests with coverage gate (minimum 70%)
+#   - SAST via Semgrep (python + owasp-top-ten rules)
+#   - SCA via pip-audit (dependency vulnerability check)
+#   - Secret scanning via Gitleaks (full git history)
+#   - SAST reports uploaded to GitLab Security Dashboard (SARIF/GL-SAST)
+#
+# Usage:
+#   Copy this file to .gitlab-ci.yml in your project root.
+#   Or include it via:
+#     include:
+#       - project: 'hiagokinlevi/secure-pipeline-blueprints'
+#         file: 'gitlab-ci/python/secure_pipeline.yml'
+#         ref: main
+#
+# Required CI/CD variables (set in GitLab project settings):
+#   - SEMGREP_APP_TOKEN (optional): For Semgrep Cloud integration
+# =============================================================================
+
+# Specify the Python base image — pin to specific version for reproducibility
+image: python:3.12-slim
+
+# Define pipeline stages in execution order
+stages:
+  - lint       # Code quality and style
+  - test       # Unit tests with coverage
+  - sast       # Static application security testing
+  - sca        # Software composition analysis
+  - secrets    # Secret scanning
+
+# ---------------------------------------------------------------------------
+# Default settings applied to all jobs
+# ---------------------------------------------------------------------------
+default:
+  # Cache pip packages to speed up jobs
+  cache:
+    key: "$CI_JOB_IMAGE-pip"
+    paths:
+      - .pip_cache/
+  before_script:
+    - pip config set global.cache-dir .pip_cache
+
+# ---------------------------------------------------------------------------
+# Stage: lint
+# ---------------------------------------------------------------------------
+lint:
+  stage: lint
+  script:
+    # Install ruff for fast Python linting
+    - pip install ruff
+    # Run linting — fail on any error
+    # --format=gitlab: produces output compatible with GitLab code quality report
+    - ruff check . --format=text
+  rules:
+    # Run on merge requests and default branch pushes
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: test
+# ---------------------------------------------------------------------------
+unit-tests:
+  stage: test
+  needs: [lint]  # Only run tests if lint passes
+  script:
+    # Install application dependencies with hash verification
+    # --require-hashes: prevents dependency tampering (supply chain protection)
+    - pip install --require-hashes -r requirements.txt
+    - pip install pytest pytest-cov
+    # Run tests with coverage gate
+    # --cov-fail-under=70: fail if coverage drops below 70%
+    - |
+      pytest \
+        --cov=src \
+        --cov-fail-under=70 \
+        --cov-report=xml:coverage.xml \
+        --cov-report=term-missing \
+        --junitxml=test-results.xml \
+        tests/
+  coverage: '/TOTAL.*\s+(\d+%)$/'  # GitLab parses coverage % from this regex
+  artifacts:
+    # Publish test results and coverage to GitLab
+    reports:
+      junit: test-results.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+    paths:
+      - coverage.xml
+      - test-results.xml
+    expire_in: 30 days
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: sast
+# ---------------------------------------------------------------------------
+semgrep-sast:
+  stage: sast
+  needs: [unit-tests]  # Only run SAST if tests pass
+  image: returntocorp/semgrep:latest
+  script:
+    # Run Semgrep with Python, OWASP Top 10, and secrets rules
+    # --sarif: output in SARIF format for GitLab Security Dashboard
+    # --error: fail the job if findings are detected
+    - |
+      semgrep scan \
+        --config p/python \
+        --config p/owasp-top-ten \
+        --config p/secrets \
+        --sarif \
+        --output semgrep-results.sarif \
+        --error \
+        .
+  variables:
+    # SEMGREP_APP_TOKEN: connect to Semgrep Cloud if token is set
+    SEMGREP_APP_TOKEN: $SEMGREP_APP_TOKEN
+  artifacts:
+    # Publish SAST report to GitLab Security Dashboard
+    reports:
+      sast: semgrep-results.sarif
+    paths:
+      - semgrep-results.sarif
+    expire_in: 30 days
+    when: always  # Upload even if the job fails (findings present)
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: sca
+# ---------------------------------------------------------------------------
+pip-audit-sca:
+  stage: sca
+  script:
+    - pip install pip-audit
+    # Run pip-audit against requirements.txt
+    # --format=json: machine-readable output
+    - |
+      pip-audit \
+        --requirement requirements.txt \
+        --format=json \
+        --output=pip-audit-results.json || true
+
+      # Parse results and fail if any vulnerabilities have available fixes
+      python3 - <<'EOF'
+      import json, sys
+      with open("pip-audit-results.json") as f:
+          data = json.load(f)
+      fixable = [
+          (dep["name"], dep["version"], v["id"], v.get("fix_versions", []))
+          for dep in data.get("dependencies", [])
+          for v in dep.get("vulns", [])
+          if v.get("fix_versions")
+      ]
+      if fixable:
+          print(f"FAIL: {len(fixable)} vulnerabilities with available fixes:")
+          for name, ver, vid, fixes in fixable:
+              print(f"  - {name}=={ver}: {vid} -> fix: {fixes}")
+          sys.exit(1)
+      else:
+          print("PASS: No fixable vulnerabilities found.")
+      EOF
+  artifacts:
+    paths:
+      - pip-audit-results.json
+    expire_in: 90 days
+    when: always
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+
+# ---------------------------------------------------------------------------
+# Stage: secrets
+# ---------------------------------------------------------------------------
+gitleaks-secret-scan:
+  stage: secrets
+  image: zricethezav/gitleaks:latest
+  variables:
+    GIT_DEPTH: 0  # Fetch full history for accurate secret scanning
+  script:
+    # Run Gitleaks on the full repository history
+    # detect: scan mode (vs protect for pre-commit hooks)
+    # --source: the repository to scan
+    # --report-path: output file for findings
+    # --config: custom configuration with additional patterns
+    - |
+      gitleaks detect \
+        --source . \
+        --report-path gitleaks-results.json \
+        --report-format json \
+        --config controls/secrets/gitleaks_config.toml \
+        --exit-code 1
+  artifacts:
+    # Publish secret scanning report to GitLab Security Dashboard
+    reports:
+      secret_detection: gitleaks-results.json
+    paths:
+      - gitleaks-results.json
+    expire_in: 30 days
+    when: always
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

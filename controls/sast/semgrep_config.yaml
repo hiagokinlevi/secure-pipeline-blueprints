@@ -1,0 +1,169 @@
+# =============================================================================
+# Semgrep Configuration — secure-pipeline-blueprints
+# =============================================================================
+# This file configures Semgrep SAST behavior when run in CI pipelines.
+# It extends the default Semgrep rules with custom patterns for common
+# security issues not covered by the public rulesets.
+#
+# Usage:
+#   semgrep --config controls/sast/semgrep_config.yaml .
+#
+# Or in the Semgrep GitHub Action:
+#   config: controls/sast/semgrep_config.yaml
+# =============================================================================
+
+rules:
+  # ---------------------------------------------------------------------------
+  # Custom Rule: Hardcoded Secret Patterns
+  # ---------------------------------------------------------------------------
+  # Catches common patterns for hardcoded API keys and tokens that the
+  # default Semgrep secrets rules may not cover for your specific services.
+
+  - id: k1n-hardcoded-aws-access-key
+    # Detects AWS Access Key IDs hardcoded in Python source
+    pattern: |
+      $VAR = "AKIA..."
+    message: >
+      Possible hardcoded AWS Access Key ID detected in '$VAR'.
+      Never hardcode cloud credentials. Use environment variables, IAM roles,
+      or a secrets manager (AWS Secrets Manager, HashiCorp Vault).
+    languages: [python, javascript, typescript, go, java]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      owasp: "A07:2021 - Identification and Authentication Failures"
+      confidence: HIGH
+
+  - id: k1n-hardcoded-jwt-secret
+    # Detects hardcoded JWT secrets or 'secret' keys in common signing patterns
+    patterns:
+      - pattern: |
+          jwt.encode($PAYLOAD, "$SECRET", ...)
+      - pattern: |
+          jwt.sign($PAYLOAD, "$SECRET", ...)
+    message: >
+      JWT secret is hardcoded. Hardcoded secrets can be extracted from source code
+      and used to forge tokens. Use an environment variable or secrets manager.
+    languages: [python, javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      confidence: HIGH
+
+  # ---------------------------------------------------------------------------
+  # Custom Rule: Insecure Deserialization
+  # ---------------------------------------------------------------------------
+
+  - id: k1n-python-pickle-deserialization
+    # pickle.loads() is unsafe when applied to untrusted data
+    patterns:
+      - pattern: pickle.loads($DATA)
+      - pattern: pickle.load($FILE)
+    message: >
+      Unsafe use of pickle deserialization. If '$DATA' comes from user input or
+      an untrusted source, this allows arbitrary code execution.
+      Use JSON or a safe serialization library instead.
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp: "A08:2021 - Software and Data Integrity Failures"
+      confidence: MEDIUM
+
+  # ---------------------------------------------------------------------------
+  # Custom Rule: Dangerous Function Usage
+  # ---------------------------------------------------------------------------
+
+  - id: k1n-python-eval-usage
+    # eval() with dynamic input is dangerous
+    patterns:
+      - pattern: eval($INPUT)
+      - pattern-not: eval("...")  # Allow eval with string literals (less dangerous)
+    message: >
+      Use of eval() with a dynamic argument. If '$INPUT' includes user-controlled
+      data, this allows arbitrary code execution. Refactor to avoid eval().
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-78: Improper Neutralization of Special Elements used in an OS Command"
+      confidence: MEDIUM
+
+  - id: k1n-node-child-process-exec
+    # exec() with user input is vulnerable to command injection
+    patterns:
+      - pattern: exec($CMD)
+      - pattern: execSync($CMD)
+      - pattern-not: exec("...")
+    message: >
+      Use of exec()/execSync() with a dynamic command. If '$CMD' includes
+      user-controlled data, this allows command injection.
+      Use execFile() with an array of arguments instead.
+    languages: [javascript, typescript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+      confidence: MEDIUM
+
+  # ---------------------------------------------------------------------------
+  # Custom Rule: Insecure Cryptography
+  # ---------------------------------------------------------------------------
+
+  - id: k1n-python-weak-hash-md5
+    # MD5 is cryptographically broken — not suitable for passwords or integrity checks
+    patterns:
+      - pattern: hashlib.md5(...)
+      - pattern: md5(...)
+    message: >
+      MD5 is a cryptographically broken hash algorithm. Do not use MD5 for
+      password hashing (use bcrypt/argon2), digital signatures, or security-sensitive
+      integrity checks. MD5 is acceptable for non-security checksums.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      confidence: MEDIUM
+
+  - id: k1n-python-weak-hash-sha1
+    # SHA-1 is deprecated for security use cases
+    pattern: hashlib.sha1(...)
+    message: >
+      SHA-1 is deprecated for security-sensitive use cases. Use SHA-256 or
+      SHA-3 instead for integrity checks and digital signatures.
+      SHA-1 is only acceptable for git-compatible checksums.
+    languages: [python]
+    severity: WARNING
+    metadata:
+      category: security
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      confidence: MEDIUM
+
+  # ---------------------------------------------------------------------------
+  # Custom Rule: SQL Injection via String Formatting
+  # ---------------------------------------------------------------------------
+
+  - id: k1n-python-sql-string-format
+    # SQL constructed with string formatting is vulnerable to injection
+    patterns:
+      - pattern: |
+          $CURSOR.execute("..." % $INPUT)
+      - pattern: |
+          $CURSOR.execute("..." + $INPUT)
+      - pattern: |
+          $CURSOR.execute(f"...{$INPUT}...")
+    message: >
+      SQL query constructed with string formatting is vulnerable to SQL injection.
+      Use parameterized queries: cursor.execute("SELECT * FROM t WHERE id = %s", (user_id,))
+    languages: [python]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+      confidence: HIGH

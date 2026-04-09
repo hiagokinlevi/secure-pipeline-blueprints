@@ -1,0 +1,203 @@
+# =============================================================================
+# Container Security Scanning Pipeline Blueprint — secure-pipeline-blueprints
+# =============================================================================
+# This workflow scans Docker container images for vulnerabilities, misconfigurations,
+# and secrets using Trivy and Hadolint.
+#
+# Security controls included:
+#   - Hadolint: Dockerfile linting (best practices + CIS Docker Benchmark)
+#   - Trivy filesystem scan: SAST and secrets in source code
+#   - Docker build: build the image for scanning
+#   - Trivy image scan: vulnerability scan of the built container image
+#   - SARIF upload: findings sent to GitHub Security tab
+#   - Gitleaks: secret scanning on full git history
+#
+# Required files:
+#   - Dockerfile in the repository root (or update dockerfile-path below)
+#
+# Usage:
+#   Copy to .github/workflows/container-security.yml in your project.
+#   Set IMAGE_NAME to your container image name.
+# =============================================================================
+
+name: Container Security Scan
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "Dockerfile*"       # Trigger on Dockerfile changes
+      - "**.py"             # Or application code changes
+      - "**.js"
+      - "**.ts"
+      - ".github/workflows/container-security.yml"
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write  # Required for SARIF upload
+  packages: read          # Required if pulling base images from GHCR
+
+env:
+  # Set your image name — update this for your project
+  IMAGE_NAME: myapp
+  IMAGE_TAG: ${{ github.sha }}  # Use commit SHA as tag for traceability
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Dockerfile Lint via Hadolint
+  # ---------------------------------------------------------------------------
+  dockerfile-lint:
+    name: Dockerfile Lint (Hadolint)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Hadolint
+        # Hadolint checks Dockerfiles against best practices and security rules:
+        # - Avoid running as root
+        # - Pin base image digests
+        # - Use COPY instead of ADD
+        # - Avoid curl | sh patterns
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: Dockerfile
+          # fail-threshold: error level to fail on (error, warning, info, style)
+          failure-threshold: warning
+          # ignore specific rules if they conflict with your requirements:
+          # ignore: DL3008,DL3009  # e.g., ignore apt version pinning rules
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Trivy Filesystem Scan (Source Code + Dependencies)
+  # ---------------------------------------------------------------------------
+  trivy-fs:
+    name: Trivy Filesystem Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy filesystem scan
+        # Trivy filesystem scan checks:
+        # - Dependency vulnerabilities (from lock files)
+        # - Misconfigurations (Dockerfiles, k8s manifests, etc.)
+        # - Secrets in source files
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "sarif"
+          output: "trivy-fs-results.sarif"
+          # severity: "CRITICAL,HIGH"  # Uncomment to only report HIGH+ findings
+          exit-code: "1"              # Fail the job if vulnerabilities are found
+          ignore-unfixed: true        # Do not fail on vulnerabilities with no fix available
+
+      - name: Upload Trivy filesystem SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-fs-results.sarif
+          category: trivy-filesystem
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Build Docker Image
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: dockerfile-lint  # Only build if Dockerfile passes linting
+    outputs:
+      image-tag: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        # Buildx provides multi-platform builds and build caching
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false              # Do NOT push — we only build for scanning
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          # Cache layers to speed up subsequent builds
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Load the image into the local Docker daemon for Trivy scanning
+          load: true
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Trivy Container Image Scan
+  # ---------------------------------------------------------------------------
+  trivy-image:
+    name: Trivy Image Scan
+    runs-on: ubuntu-latest
+    needs: build  # Scan the built image
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Rebuild image for scanning
+        # We rebuild here because the built image from the 'build' job is not
+        # automatically available in a different job. In a production setup,
+        # push to a registry and pull here instead.
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          load: true
+
+      - name: Run Trivy container image scan
+        # Trivy image scan checks:
+        # - OS package vulnerabilities (apt, yum, apk)
+        # - Application dependency vulnerabilities
+        # - Secrets embedded in the image layers
+        # - Misconfigurations in Dockerfile instructions
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+          format: "sarif"
+          output: "trivy-image-results.sarif"
+          exit-code: "1"
+          ignore-unfixed: true    # Do not fail on vulnerabilities with no upstream fix
+          vuln-type: "os,library" # Scan both OS packages and app libraries
+          severity: "CRITICAL,HIGH"  # Only fail on CRITICAL and HIGH severity
+
+      - name: Upload Trivy image SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-image-results.sarif
+          category: trivy-container-image
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Secret Scanning
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --config=controls/secrets/gitleaks_config.toml

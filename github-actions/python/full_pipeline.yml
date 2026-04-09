@@ -1,0 +1,237 @@
+# =============================================================================
+# Secure Python Pipeline Blueprint — secure-pipeline-blueprints
+# =============================================================================
+# This workflow implements a security-first CI pipeline for Python applications.
+#
+# Security controls included:
+#   - Dependency installation with hash verification (--require-hashes)
+#   - Lint via ruff (catches code quality and some security issues)
+#   - Unit tests with coverage gate (minimum 70%)
+#   - SAST via Semgrep (python rules + OWASP Top Ten + secrets rules)
+#   - SCA via pip-audit (dependency vulnerability check against OSV database)
+#   - Secret scanning via Gitleaks (full git history scan)
+#   - SARIF upload to GitHub Security tab for centralized findings
+#
+# Required secrets:
+#   - SEMGREP_APP_TOKEN (optional): For Semgrep Cloud dashboard integration
+#
+# Required files in your project:
+#   - requirements.txt with hashes (generate: pip-compile --generate-hashes requirements.in)
+#   - tests/ directory with pytest test files
+#   - src/ directory (or adjust --cov flag for your source layout)
+#
+# Usage:
+#   Copy to .github/workflows/secure-python.yml in your project.
+#   Adjust python-version, coverage threshold, and paths as needed.
+# =============================================================================
+
+name: Secure Python Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+# Enforce minimum permissions — principle of least privilege
+# Each job may override this with additional permissions if needed
+permissions:
+  contents: read
+  security-events: write  # Required for SARIF upload to GitHub Security tab
+  pull-requests: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Lint and Unit Tests with Coverage Gate
+  # ---------------------------------------------------------------------------
+  test:
+    name: Lint & Test (Coverage Gate)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4  # Pinned to major version for stability
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"  # Cache pip downloads to speed up runs
+
+      - name: Install dependencies with hash verification
+        run: |
+          # --require-hashes ensures each package matches its expected hash.
+          # This prevents dependency tampering / supply chain attacks.
+          # To generate requirements.txt with hashes: pip-compile --generate-hashes requirements.in
+          pip install --require-hashes -r requirements.txt
+          # Install dev dependencies (no hash verification needed — CI tools only)
+          pip install pytest pytest-cov ruff
+
+      - name: Lint with ruff
+        run: |
+          # ruff is a fast Python linter. Catches bugs and style issues.
+          # --select E,W,F covers pyflakes, pycodestyle
+          ruff check . --format=github
+
+      - name: Run unit tests with coverage gate
+        run: |
+          # --cov-fail-under=70: fail the build if coverage drops below 70%.
+          # Adjust this threshold upward as your test suite matures.
+          # Start at your current baseline (use --cov-report=term to check it).
+          pytest \
+            --cov=src \
+            --cov-fail-under=70 \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            tests/
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        if: always()  # Upload coverage even if tests fail, for debugging
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Job 2: SAST — Static Application Security Testing via Semgrep
+  # ---------------------------------------------------------------------------
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    needs: test  # Only run SAST if tests pass — saves compute on broken builds
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep SAST
+        # Semgrep scans for security vulnerabilities in source code.
+        # Rules used:
+        #   p/python        — Python-specific security patterns
+        #   p/owasp-top-ten — OWASP Top 10 vulnerability patterns
+        #   p/secrets       — Hardcoded secrets and credentials
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/python
+            p/owasp-top-ten
+            p/secrets
+          # Generate SARIF output so findings appear in the GitHub Security tab
+          generateSarif: "1"
+        env:
+          # SEMGREP_APP_TOKEN is optional — set it to integrate with Semgrep Cloud
+          # for policy management, triage, and historical tracking
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        # Always upload, even if Semgrep found issues — we want findings in the Security tab
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep-python  # Category label in the Security tab
+
+  # ---------------------------------------------------------------------------
+  # Job 3: SCA — Software Composition Analysis via pip-audit
+  # ---------------------------------------------------------------------------
+  sca:
+    name: SCA (pip-audit)
+    runs-on: ubuntu-latest
+    # SCA runs independently of tests — we want to catch vulnerable deps
+    # even if unit tests are failing
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run pip-audit (dependency vulnerability scan)
+        run: |
+          pip install pip-audit
+
+          # Scan requirements.txt against the OSV (Open Source Vulnerabilities) database.
+          # --format=json: machine-readable output for post-processing
+          # --output: write results to file for artifact upload
+          pip-audit \
+            --requirement requirements.txt \
+            --format=json \
+            --output=pip-audit-results.json || true
+          # 'or true' prevents pip-audit from stopping the job before we process results
+
+          # Parse results and fail if any vulnerabilities have available fixes.
+          # Unfixable vulns (no fix version) are reported but do not fail the build.
+          python - <<'EOF'
+          import json, sys
+
+          with open("pip-audit-results.json") as f:
+              data = json.load(f)
+
+          fixable = []
+          unfixable = []
+
+          for dep in data.get("dependencies", []):
+              for vuln in dep.get("vulns", []):
+                  entry = {
+                      "name": dep.get("name"),
+                      "version": dep.get("version"),
+                      "id": vuln.get("id"),
+                      "description": vuln.get("description", "")[:100],
+                      "fix_versions": vuln.get("fix_versions", []),
+                  }
+                  if vuln.get("fix_versions"):
+                      fixable.append(entry)
+                  else:
+                      unfixable.append(entry)
+
+          if unfixable:
+              print(f"\nWARNING: {len(unfixable)} unfixable vulnerabilities (no patch available):")
+              for v in unfixable:
+                  print(f"  - {v['name']}=={v['version']}: {v['id']}")
+
+          if fixable:
+              print(f"\nFAIL: {len(fixable)} vulnerabilities with available fixes:")
+              for v in fixable:
+                  print(f"  - {v['name']}=={v['version']}: {v['id']} (fix: {v['fix_versions']})")
+              sys.exit(1)
+          else:
+              print(f"\nPASS: No fixable vulnerabilities found.")
+          EOF
+
+      - name: Upload pip-audit results artifact
+        uses: actions/upload-artifact@v4
+        if: always()  # Always upload for audit trail
+        with:
+          name: pip-audit-results
+          path: pip-audit-results.json
+          retention-days: 90  # Retain for 90 days for compliance purposes
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Secret Scanning via Gitleaks
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v4
+        with:
+          # Fetch full git history — Gitleaks needs this to scan all commits,
+          # not just the current state. Shallow clones miss secrets in old commits.
+          fetch-depth: 0
+
+      - name: Run Gitleaks secret scan
+        # Gitleaks scans for hardcoded secrets: API keys, tokens, passwords, etc.
+        # It scans the full git history, not just the current working tree.
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}  # Required for Gitleaks+ features
+        with:
+          # Point to our custom Gitleaks config for additional secret patterns
+          args: --config=controls/secrets/gitleaks_config.toml

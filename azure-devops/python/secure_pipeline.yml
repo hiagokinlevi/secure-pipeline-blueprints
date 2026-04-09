@@ -1,0 +1,296 @@
+# =============================================================================
+# Secure Python Pipeline Blueprint — secure-pipeline-blueprints
+# Azure DevOps Pipelines
+# =============================================================================
+# This pipeline implements a security-first CI pipeline for Python applications
+# on Azure DevOps.
+#
+# Security controls included:
+#   - Dependency installation with hash verification (--require-hashes)
+#   - Lint via ruff (catches code quality and some security issues)
+#   - Unit tests with coverage gate (minimum 70%)
+#   - SAST via Semgrep (python rules + OWASP Top Ten + secrets rules)
+#   - SCA via pip-audit (dependency vulnerability check against OSV database)
+#   - Secret scanning via Gitleaks (full git history scan)
+#   - SARIF results published to Azure DevOps Security tab
+#
+# Required pipeline variables (set in Azure DevOps Library):
+#   - SEMGREP_APP_TOKEN (optional): Semgrep Cloud integration token
+#
+# Required files in your project:
+#   - requirements.txt with hashes (generate: pip-compile --generate-hashes requirements.in)
+#   - tests/ directory with pytest test files
+#   - src/ directory (or adjust --cov flag for your source layout)
+#
+# Usage:
+#   Copy to azure-pipelines.yml in your project root.
+#   Adjust pythonVersion, coverage threshold, and paths as needed.
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+
+pr:
+  branches:
+    include:
+      - main
+
+# Pin the agent pool and OS to a specific Ubuntu image for reproducibility
+pool:
+  vmImage: ubuntu-22.04
+
+variables:
+  # Python version used across all jobs
+  pythonVersion: "3.12"
+  # Minimum acceptable test coverage percentage
+  coverageThreshold: 70
+
+stages:
+
+  # ---------------------------------------------------------------------------
+  # Stage 1: Lint and Unit Tests with Coverage Gate
+  # ---------------------------------------------------------------------------
+  - stage: TestAndLint
+    displayName: "Lint & Test (Coverage Gate)"
+    jobs:
+      - job: Test
+        displayName: "Run Lint and Tests"
+        timeoutInMinutes: 30  # Prevent runaway builds
+
+        steps:
+          - checkout: self
+            displayName: "Checkout code"
+            # fetchDepth: 1 is the default — shallow clone for speed
+            fetchDepth: 1
+
+          - task: UsePythonVersion@0
+            displayName: "Set up Python $(pythonVersion)"
+            inputs:
+              versionSpec: "$(pythonVersion)"
+              addToPath: true
+
+          - script: |
+              # --require-hashes ensures each package matches its expected hash.
+              # This prevents dependency tampering / supply chain attacks.
+              # To generate requirements.txt with hashes: pip-compile --generate-hashes requirements.in
+              pip install --require-hashes -r requirements.txt
+              # Install dev dependencies (no hash verification needed — CI tools only)
+              pip install pytest pytest-cov ruff
+            displayName: "Install dependencies with hash verification"
+
+          - script: |
+              # ruff is a fast Python linter. Catches bugs and style issues.
+              # --output-format=github: annotates PR diffs with lint findings
+              ruff check . --output-format=github
+            displayName: "Lint with ruff"
+
+          - script: |
+              # --cov-fail-under: fail the build if coverage drops below the threshold.
+              pytest \
+                --cov=src \
+                --cov-fail-under=$(coverageThreshold) \
+                --cov-report=xml:coverage.xml \
+                --cov-report=term-missing \
+                tests/
+            displayName: "Run unit tests with coverage gate"
+
+          - task: PublishCodeCoverageResults@1
+            displayName: "Publish coverage to Azure DevOps"
+            condition: always()  # Upload even if tests fail, for debugging
+            inputs:
+              codeCoverageTool: Cobertura
+              summaryFileLocation: coverage.xml
+              failIfCoverageEmpty: false
+
+  # ---------------------------------------------------------------------------
+  # Stage 2: SAST — Static Application Security Testing via Semgrep
+  # ---------------------------------------------------------------------------
+  - stage: SAST
+    displayName: "SAST (Semgrep)"
+    dependsOn: TestAndLint  # Only run SAST if tests pass — saves compute
+    condition: succeeded()
+
+    jobs:
+      - job: Semgrep
+        displayName: "Run Semgrep SAST"
+        timeoutInMinutes: 30
+
+        steps:
+          - checkout: self
+            displayName: "Checkout code"
+            fetchDepth: 1
+
+          - script: |
+              pip install semgrep
+            displayName: "Install Semgrep"
+
+          - script: |
+              # Scan for security vulnerabilities in source code.
+              # Rules:
+              #   p/python        — Python-specific security patterns
+              #   p/owasp-top-ten — OWASP Top 10 vulnerability patterns
+              #   p/secrets       — Hardcoded secrets and credentials
+              semgrep scan \
+                --config=p/python \
+                --config=p/owasp-top-ten \
+                --config=p/secrets \
+                --sarif \
+                --output=semgrep.sarif \
+                . || true
+              # 'or true' prevents semgrep from stopping the pipeline before SARIF upload
+            displayName: "Run Semgrep scan"
+            env:
+              # SEMGREP_APP_TOKEN is optional — set it to integrate with Semgrep Cloud
+              SEMGREP_APP_TOKEN: $(SEMGREP_APP_TOKEN)
+
+          - script: |
+              # Fail the build if Semgrep found any HIGH or CRITICAL findings.
+              # Semgrep exits with code 1 when findings are present — re-run without '|| true'
+              semgrep scan \
+                --config=p/python \
+                --config=p/owasp-top-ten \
+                --severity=ERROR \
+                . 2>&1
+            displayName: "Enforce SAST gate (block on HIGH+ findings)"
+            continueOnError: false  # Security gates MUST fail the build
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish Semgrep SARIF artifact"
+            condition: always()
+            inputs:
+              pathToPublish: semgrep.sarif
+              artifactName: semgrep-sarif
+              publishLocation: Container
+
+  # ---------------------------------------------------------------------------
+  # Stage 3: SCA — Software Composition Analysis via pip-audit
+  # ---------------------------------------------------------------------------
+  - stage: SCA
+    displayName: "SCA (pip-audit)"
+    dependsOn: []  # Run independently — catch vulnerable deps even if tests fail
+    condition: always()
+
+    jobs:
+      - job: PipAudit
+        displayName: "Run pip-audit SCA"
+        timeoutInMinutes: 20
+
+        steps:
+          - checkout: self
+            displayName: "Checkout code"
+            fetchDepth: 1
+
+          - task: UsePythonVersion@0
+            displayName: "Set up Python $(pythonVersion)"
+            inputs:
+              versionSpec: "$(pythonVersion)"
+              addToPath: true
+
+          - script: |
+              pip install pip-audit
+
+              # Scan requirements.txt against the OSV (Open Source Vulnerabilities) database.
+              pip-audit \
+                --requirement requirements.txt \
+                --format=json \
+                --output=pip-audit-results.json || true
+
+              # Parse results: fail only if fixable vulnerabilities exist.
+              python - <<'PYEOF'
+              import json, sys
+
+              with open("pip-audit-results.json") as f:
+                  data = json.load(f)
+
+              fixable = []
+              unfixable = []
+
+              for dep in data.get("dependencies", []):
+                  for vuln in dep.get("vulns", []):
+                      entry = {
+                          "name": dep.get("name"),
+                          "version": dep.get("version"),
+                          "id": vuln.get("id"),
+                          "description": vuln.get("description", "")[:100],
+                          "fix_versions": vuln.get("fix_versions", []),
+                      }
+                      if vuln.get("fix_versions"):
+                          fixable.append(entry)
+                      else:
+                          unfixable.append(entry)
+
+              if unfixable:
+                  print(f"\nWARNING: {len(unfixable)} unfixable vulnerabilities (no patch available):")
+                  for v in unfixable:
+                      print(f"  - {v['name']}=={v['version']}: {v['id']}")
+
+              if fixable:
+                  print(f"\nFAIL: {len(fixable)} vulnerabilities with available fixes:")
+                  for v in fixable:
+                      print(f"  - {v['name']}=={v['version']}: {v['id']} (fix: {v['fix_versions']})")
+                  sys.exit(1)
+              else:
+                  print(f"\nPASS: No fixable vulnerabilities found.")
+              PYEOF
+            displayName: "Run pip-audit and enforce SCA gate"
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish pip-audit results (90-day retention)"
+            condition: always()  # Always retain for audit trail
+            inputs:
+              pathToPublish: pip-audit-results.json
+              artifactName: pip-audit-results
+              publishLocation: Container
+
+  # ---------------------------------------------------------------------------
+  # Stage 4: Secret Scanning via Gitleaks
+  # ---------------------------------------------------------------------------
+  - stage: SecretScan
+    displayName: "Secret Scanning (Gitleaks)"
+    dependsOn: []  # Run independently in parallel
+    condition: always()
+
+    jobs:
+      - job: Gitleaks
+        displayName: "Run Gitleaks"
+        timeoutInMinutes: 20
+
+        steps:
+          - checkout: self
+            displayName: "Checkout full git history for secret scan"
+            # Gitleaks needs full history to scan all commits.
+            # Shallow clones miss secrets committed and later removed.
+            fetchDepth: 0
+
+          - script: |
+              # Install Gitleaks — pin the version for reproducibility
+              GITLEAKS_VERSION="8.18.2"
+              curl -sSL \
+                "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+                | tar -xz -C /usr/local/bin gitleaks
+              chmod +x /usr/local/bin/gitleaks
+            displayName: "Install Gitleaks"
+
+          - script: |
+              # Scan the full git history for hardcoded secrets.
+              # --config: use custom config for additional secret patterns
+              # --exit-code 1: fail if any secrets are found
+              gitleaks detect \
+                --config=controls/secrets/gitleaks_config.toml \
+                --source=. \
+                --exit-code=1 \
+                --report-path=gitleaks-report.json \
+                --report-format=json
+            displayName: "Scan for secrets with Gitleaks"
+            # Security gates MUST fail the build — do NOT add continueOnError: true
+
+          - task: PublishBuildArtifacts@1
+            displayName: "Publish Gitleaks report"
+            condition: always()
+            inputs:
+              pathToPublish: gitleaks-report.json
+              artifactName: gitleaks-report
+              publishLocation: Container

@@ -1,0 +1,209 @@
+# =============================================================================
+# Secure Terraform / IaC Pipeline Blueprint — secure-pipeline-blueprints
+# =============================================================================
+# This workflow implements a security-first CI pipeline for Terraform and
+# other Infrastructure-as-Code (IaC).
+#
+# Security controls included:
+#   - terraform fmt check (enforces consistent formatting)
+#   - terraform validate (checks configuration for syntax/logic errors)
+#   - tflint (Terraform linter for best practices and provider-specific rules)
+#   - checkov (SAST for Terraform: detects misconfigurations against CIS benchmarks)
+#   - tfsec (security scanner for Terraform with SARIF output)
+#   - Gitleaks (secret scanning on full git history)
+#   - SARIF upload for both checkov and tfsec findings
+#
+# Required secrets:
+#   - TF_API_TOKEN (optional): For Terraform Cloud plan output
+#
+# Required files in your project:
+#   - *.tf files in the repository root or specified working-directory
+#   - controls/iac/checkov_config.yaml (from this repository)
+#
+# Usage:
+#   Copy to .github/workflows/terraform-security.yml in your project.
+#   Set working-directory to your Terraform module path if not root.
+# =============================================================================
+
+name: Secure Terraform Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "**.tf"          # Only trigger on Terraform file changes
+      - "**.tfvars"
+      - ".github/workflows/terraform-security.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "**.tf"
+      - "**.tfvars"
+
+# Minimum permissions for IaC pipeline
+permissions:
+  contents: read
+  security-events: write  # Required for SARIF upload
+  pull-requests: read
+
+env:
+  # Set Terraform working directory — update if your Terraform is not in repo root
+  TF_WORKING_DIR: "."
+  TF_VERSION: "1.7.0"  # Pin Terraform version for reproducible runs
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Terraform Format and Validation
+  # ---------------------------------------------------------------------------
+  validate:
+    name: Terraform Validate & Format
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          # terraform_cloud_tokens: ${{ secrets.TF_API_TOKEN }}  # Uncomment for Terraform Cloud
+
+      - name: Terraform Format Check
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          # Check that all .tf files are properly formatted.
+          # -check: fails if files are not formatted (does not modify files)
+          # -diff: show the diff for unformatted files
+          # -recursive: check all subdirectories
+          terraform fmt -check -diff -recursive
+
+      - name: Terraform Init (without backend)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          # Initialize Terraform to download provider schemas for validation.
+          # -backend=false: skip backend initialization (we are not deploying here)
+          # -input=false: do not prompt for input
+          terraform init -backend=false -input=false
+
+      - name: Terraform Validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          # Validate the Terraform configuration for syntax errors and internal consistency.
+          # This catches type mismatches, missing required arguments, and undefined references.
+          terraform validate
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Terraform Lint via tflint
+  # ---------------------------------------------------------------------------
+  lint:
+    name: Terraform Lint (tflint)
+    runs-on: ubuntu-latest
+    needs: validate  # Only lint if validation passes
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up tflint
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: latest
+
+      - name: Initialize tflint plugins
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          # Initialize tflint to download rule plugins.
+          # --config: use project-level config if present, otherwise defaults
+          tflint --init
+
+      - name: Run tflint
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          # --format=compact: concise output
+          # --recursive: lint all modules in subdirectories
+          tflint --format=compact --recursive
+
+  # ---------------------------------------------------------------------------
+  # Job 3: IaC Security Scanning via Checkov
+  # ---------------------------------------------------------------------------
+  checkov:
+    name: IaC Security (Checkov)
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Checkov
+        # Checkov checks Terraform against CIS benchmarks, AWS/GCP/Azure security best practices,
+        # and common misconfiguration patterns.
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ env.TF_WORKING_DIR }}
+          framework: terraform
+          # Use our custom Checkov configuration for baseline checks
+          config_file: controls/iac/checkov_config.yaml
+          # Output SARIF for GitHub Security tab integration
+          output_format: sarif
+          output_file_path: checkov-results.sarif
+          # Fail on CRITICAL misconfigurations only — adjust as you mature your IaC posture
+          # soft_fail_on: MEDIUM,LOW  # Uncomment to start with high-severity only
+          quiet: false
+
+      - name: Upload Checkov SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()  # Always upload findings
+        with:
+          sarif_file: checkov-results.sarif
+          category: checkov-terraform
+
+  # ---------------------------------------------------------------------------
+  # Job 4: IaC Security Scanning via tfsec
+  # ---------------------------------------------------------------------------
+  tfsec:
+    name: IaC Security (tfsec)
+    runs-on: ubuntu-latest
+    needs: validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run tfsec
+        # tfsec provides a complementary set of Terraform security checks to checkov.
+        # Running both tools increases coverage.
+        uses: aquasecurity/tfsec-sarif-action@v0.1.4
+        with:
+          sarif_file: tfsec-results.sarif
+          working_directory: ${{ env.TF_WORKING_DIR }}
+          # tfsec_flags: "--minimum-severity HIGH"  # Uncomment to only fail on HIGH+
+
+      - name: Upload tfsec SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: tfsec-results.sarif
+          category: tfsec-terraform
+
+  # ---------------------------------------------------------------------------
+  # Job 5: Secret Scanning via Gitleaks
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history required for accurate secret scanning
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Custom config with additional patterns for IaC secrets (cloud credentials, etc.)
+          args: --config=controls/secrets/gitleaks_config.toml

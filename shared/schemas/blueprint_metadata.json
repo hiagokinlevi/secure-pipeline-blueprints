@@ -1,0 +1,102 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/hiagokinlevi/secure-pipeline-blueprints/shared/schemas/blueprint_metadata.json",
+  "title": "k1N Pipeline Blueprint Metadata Schema",
+  "description": "JSON Schema for validating secure-pipeline-blueprints blueprint metadata files. All required fields must be present and valid.",
+  "type": "object",
+  "required": [
+    "name",
+    "platform",
+    "stack",
+    "description",
+    "controls",
+    "version",
+    "maturity"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 5,
+      "maxLength": 120,
+      "description": "Human-readable name for the pipeline blueprint"
+    },
+    "platform": {
+      "type": "string",
+      "enum": ["github-actions", "gitlab-ci", "azure-devops", "jenkins", "circleci", "bitbucket-pipelines"],
+      "description": "CI/CD platform this blueprint is designed for"
+    },
+    "stack": {
+      "type": "string",
+      "enum": ["python", "nodejs", "go", "java", "dotnet", "ruby", "php", "rust", "terraform", "kubernetes", "containers", "generic"],
+      "description": "Language or technology stack this blueprint targets"
+    },
+    "description": {
+      "type": "string",
+      "minLength": 20,
+      "description": "Clear description of what this blueprint provides"
+    },
+    "controls": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "sast", "sca", "secret-scanning", "iac-scanning",
+          "container-scanning", "coverage-gate", "lint",
+          "dast", "fuzzing", "license-scanning", "sbom"
+        ]
+      },
+      "minItems": 1,
+      "description": "Security controls included in this blueprint"
+    },
+    "tools": {
+      "type": "object",
+      "description": "Tools used for each control category",
+      "properties": {
+        "sast": {"type": "string"},
+        "sca": {"type": "string"},
+        "secret_scanning": {"type": "string"},
+        "iac_scanning": {"type": "string"},
+        "container_scanning": {"type": "string"},
+        "lint": {"type": "string"}
+      }
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+      "description": "Semantic version of this blueprint"
+    },
+    "maturity": {
+      "type": "string",
+      "enum": ["draft", "reviewed", "tested", "operational", "mature"],
+      "description": "Maturity level of this blueprint"
+    },
+    "required_secrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "required", "description"],
+        "properties": {
+          "name": {"type": "string"},
+          "required": {"type": "boolean"},
+          "description": {"type": "string"}
+        }
+      },
+      "description": "Secrets required by this blueprint"
+    },
+    "coverage_threshold": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Minimum test coverage percentage required by this blueprint"
+    },
+    "deployment_notes": {
+      "type": "string",
+      "description": "Notes on adopting this blueprint in a new project"
+    },
+    "known_limitations": {
+      "type": "string",
+      "description": "Known limitations or caveats of this blueprint"
+    }
+  },
+  "additionalProperties": true
+}

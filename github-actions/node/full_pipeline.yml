@@ -1,0 +1,192 @@
+# =============================================================================
+# Secure Node.js Pipeline Blueprint — secure-pipeline-blueprints
+# =============================================================================
+# This workflow implements a security-first CI pipeline for Node.js applications.
+#
+# Security controls included:
+#   - npm ci (clean install with lockfile enforcement)
+#   - Lint via ESLint with security plugin (eslint-plugin-security)
+#   - Unit tests with coverage gate (minimum 70%)
+#   - SAST via Semgrep (javascript + owasp-top-ten rules)
+#   - SCA via npm audit (dependency vulnerability check)
+#   - Secret scanning via Gitleaks (full git history scan)
+#   - SARIF upload to GitHub Security tab
+#
+# Required secrets:
+#   - SEMGREP_APP_TOKEN (optional): For Semgrep Cloud dashboard integration
+#
+# Required files in your project:
+#   - package.json with jest configured for coverage
+#   - package-lock.json (lockfile required for npm ci)
+#   - .eslintrc.js/.eslintrc.json with eslint-plugin-security configured
+#
+# Usage:
+#   Copy to .github/workflows/secure-node.yml in your project.
+# =============================================================================
+
+name: Secure Node.js Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+# Minimum permissions — least privilege
+permissions:
+  contents: read
+  security-events: write  # Required for SARIF upload to GitHub Security tab
+  pull-requests: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Lint and Unit Tests with Coverage Gate
+  # ---------------------------------------------------------------------------
+  test:
+    name: Lint & Test (Coverage Gate)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20 (LTS)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"  # Use current LTS — update to 22 when available
+          cache: "npm"         # Cache npm downloads for faster runs
+
+      - name: Install dependencies (clean install with lockfile enforcement)
+        run: |
+          # npm ci uses package-lock.json to ensure reproducible installs.
+          # It fails if package-lock.json is missing or out of sync with package.json.
+          # This prevents "works on my machine" issues and reduces supply chain risk.
+          npm ci
+
+      - name: Install security linting plugin
+        run: |
+          # eslint-plugin-security catches common Node.js security pitfalls:
+          # eval(), unsafe regex, insecure file paths, prototype pollution, etc.
+          npm install --save-dev eslint-plugin-security
+
+      - name: Run ESLint with security plugin
+        run: |
+          # Lint the codebase including security rules.
+          # --format=sarif: generate SARIF output for GitHub Security tab (optional, requires eslint-sarif-formatter)
+          # If you don't have eslint-sarif-formatter, use --format=unix instead.
+          npx eslint . --ext .js,.ts,.jsx,.tsx --format=unix --max-warnings=0
+
+      - name: Run tests with coverage gate
+        run: |
+          # jest --coverage: generate coverage report
+          # --coverageThreshold: fail if coverage drops below 70% (branches, functions, lines, statements)
+          # Adjust thresholds based on your project maturity — aim to increase quarterly.
+          npx jest \
+            --coverage \
+            --coverageThreshold='{"global":{"branches":70,"functions":70,"lines":70,"statements":70}}' \
+            --coverageReporters=lcov,text
+
+      - name: Upload coverage report artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-coverage-report
+          path: coverage/
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # Job 2: SAST — Static Application Security Testing via Semgrep
+  # ---------------------------------------------------------------------------
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    needs: test  # Run SAST only if tests pass
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep SAST
+        # Rules:
+        #   p/javascript      — JavaScript/TypeScript security patterns
+        #   p/nodejs          — Node.js-specific patterns (path traversal, command injection, etc.)
+        #   p/owasp-top-ten   — OWASP Top 10 vulnerability patterns
+        #   p/secrets         — Hardcoded secrets and credentials
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/javascript
+            p/nodejs
+            p/owasp-top-ten
+            p/secrets
+          generateSarif: "1"
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep-javascript
+
+  # ---------------------------------------------------------------------------
+  # Job 3: SCA — Software Composition Analysis via npm audit
+  # ---------------------------------------------------------------------------
+  sca:
+    name: SCA (npm audit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        run: |
+          # --audit-level=high: fail if HIGH or CRITICAL vulnerabilities are found.
+          # --json: machine-readable output for artifact
+          # || true: capture exit code to handle the output ourselves
+          npm audit --audit-level=high --json > npm-audit-results.json || true
+
+          # Display the audit summary
+          npm audit --audit-level=high || {
+            echo "::error::npm audit found HIGH or CRITICAL vulnerabilities. Run 'npm audit fix' to remediate."
+            exit 1
+          }
+
+      - name: Upload npm audit results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: npm-audit-results
+          path: npm-audit-results.json
+          retention-days: 90
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Secret Scanning via Gitleaks
+  # ---------------------------------------------------------------------------
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for accurate secret scanning
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --config=controls/secrets/gitleaks_config.toml
