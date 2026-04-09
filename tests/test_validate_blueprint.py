@@ -252,6 +252,11 @@ class TestRealBlueprints(unittest.TestCase):
         config_path = REPO_ROOT / "controls" / "sast" / "semgrep_config.yaml"
         self.assertTrue(config_path.exists(), f"Config not found: {config_path}")
 
+    def test_dependency_review_workflow_exists(self):
+        """The reusable dependency review workflow file should exist."""
+        workflow_path = REPO_ROOT / "github-actions" / "reusable" / "dependency_review.yml"
+        self.assertTrue(workflow_path.exists(), f"Workflow not found: {workflow_path}")
+
     def test_checkov_config_exists(self):
         """The Checkov configuration file should exist."""
         config_path = REPO_ROOT / "controls" / "iac" / "checkov_config.yaml"

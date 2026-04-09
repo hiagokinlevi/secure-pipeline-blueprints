@@ -68,3 +68,5 @@ secure-pipeline-blueprints/
 | IaC | Detect cloud misconfigurations | Checkov, tfsec, tflint |
 | Containers | Detect vulnerabilities in images | Trivy, Hadolint |
 | Coverage | Prevent test coverage regression | pytest-cov, jest --coverage |
+
+Reusable workflows also include PR-time dependency review so manifest and lockfile changes are gated before merge, not only after the full SCA stage runs.

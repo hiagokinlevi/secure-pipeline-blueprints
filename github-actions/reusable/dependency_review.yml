@@ -1,0 +1,61 @@
+# =============================================================================
+# Reusable Dependency Review Workflow — secure-pipeline-blueprints
+# =============================================================================
+# Reviews newly introduced or changed dependencies on pull requests by calling
+# GitHub's dependency review action. This closes a common SCA gap: PRs that
+# change lockfiles or manifests but do not get blocked before merge.
+#
+# How to use from another repository:
+#
+#   jobs:
+#     dependency-review:
+#       uses: hiagokinlevi/secure-pipeline-blueprints/.github/workflows/dependency_review.yml@main
+#       permissions:
+#         contents: read
+#         pull-requests: write
+#
+# Notes:
+#   - Trigger this workflow only for pull requests or reusable workflow calls.
+#   - Keep the token least-privileged: contents=read, pull-requests=write.
+#   - Tune `fail_on_severity` to your remediation appetite; "high" is a strong default.
+# =============================================================================
+
+name: Reusable Dependency Review
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      fail_on_severity:
+        description: "Fail when a newly introduced dependency reaches this severity or higher"
+        type: string
+        default: high
+        required: false
+      comment_summary_in_pr:
+        description: "Comment a dependency review summary on the pull request"
+        type: boolean
+        default: true
+        required: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  dependency-review:
+    name: Review Dependency Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Review newly introduced dependencies
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: ${{ inputs.fail_on_severity || 'high' }}
+          comment-summary-in-pr: ${{ inputs.comment_summary_in_pr }}

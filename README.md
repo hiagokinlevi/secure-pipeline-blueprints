@@ -44,6 +44,7 @@ Each blueprint includes:
 | **Go** | Planned | Semgrep, govulncheck, Gitleaks, staticcheck |
 | **Terraform / IaC** | `github-actions/iac/terraform_pipeline.yml` | tflint, checkov, terraform validate, tfsec |
 | **Containers** | `github-actions/containers/container_scan.yml` | Trivy, Hadolint, Gitleaks |
+| **Dependency Review** | `github-actions/reusable/dependency_review.yml` | GitHub dependency review, PR summary, severity gate |
 
 ---
 
@@ -140,6 +141,17 @@ jobs:
     secrets: inherit
 ```
 
+For PR-time dependency change blocking, use the reusable dependency review workflow:
+
+```yaml
+jobs:
+  dependency-review:
+    uses: hiagokinlevi/secure-pipeline-blueprints/.github/workflows/dependency_review.yml@main
+    permissions:
+      contents: read
+      pull-requests: write
+```
+
 ---
 
 ## Repository Structure
@@ -151,7 +163,7 @@ secure-pipeline-blueprints/
 │   ├── node/                 # Node.js secure pipeline blueprint
 │   ├── iac/                  # Terraform/IaC security pipeline
 │   ├── containers/           # Container scanning pipeline
-│   └── reusable/             # Reusable workflow components
+│   └── reusable/             # Reusable workflow components (secret scan, dependency review)
 ├── gitlab-ci/
 │   └── python/               # GitLab CI Python blueprint
 ├── controls/

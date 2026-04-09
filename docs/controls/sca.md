@@ -72,6 +72,18 @@ Sometimes you cannot immediately fix a vulnerability (e.g., no fix available, br
 
 For pip-audit exemptions, use `pip-audit --ignore-vuln CVE-YYYY-XXXXX` with a documented reason in your CI workflow.
 
+## PR Dependency Review
+
+For GitHub pull requests, use `github-actions/reusable/dependency_review.yml` to block dependency changes before merge. This catches newly introduced vulnerable packages even when the main branch is currently clean.
+
+Recommended baseline:
+
+- Trigger on `pull_request`
+- Set `permissions.contents=read`
+- Set `permissions.pull-requests=write`
+- Fail on `high` or stricter severity
+- Enable PR summaries so reviewers see the exact dependency deltas
+
 ## SCA Limitations
 
 - SCA only catches **known** vulnerabilities (in public CVE/OSV databases)

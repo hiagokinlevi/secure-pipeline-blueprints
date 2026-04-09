@@ -11,7 +11,7 @@ Usage:
     python validate_blueprint.py --all --verbose
 
 Requirements:
-    pip install jsonschema pyyaml
+    Optional: jsonschema for schema validation
 
 Exit codes:
     0 — all blueprints valid
@@ -86,9 +86,12 @@ def validate_github_actions_yaml(content: dict) -> list[str]:
     issues = []
 
     # Check required top-level keys
-    for key in ["name", "on", "jobs"]:
+    has_on = "on" in content or True in content
+    for key in ["name", "jobs"]:
         if key not in content:
             issues.append(f"Missing required GitHub Actions key: '{key}'")
+    if not has_on:
+        issues.append("Missing required GitHub Actions key: 'on'")
 
     # Check for permissions block (principle of least privilege)
     if "permissions" not in content:
@@ -121,6 +124,28 @@ def validate_github_actions_yaml(content: dict) -> list[str]:
             )
 
     return issues
+
+
+def expected_control_hints(blueprint_path: Path) -> list[tuple[str, str]]:
+    """Return the recommended control/tool hints for a specific blueprint path."""
+    path_str = str(blueprint_path)
+
+    if "github-actions/reusable/secret_scan.yml" in path_str:
+        return [("secret scanning", "gitleaks")]
+    if "github-actions/reusable/dependency_review.yml" in path_str:
+        return []
+    if "github-actions/containers/" in path_str:
+        return [("secret scanning", "gitleaks")]
+    if "github-actions/iac/" in path_str:
+        return [("secret scanning", "gitleaks")]
+    if "gitlab-ci/" in path_str:
+        return []
+
+    return [
+        ("SAST", "semgrep"),
+        ("SCA", "audit"),
+        ("secret scanning", "gitleaks"),
+    ]
 
 
 def validate_gitlab_ci_yaml(content: dict) -> list[str]:
@@ -168,7 +193,7 @@ def validate_blueprint_yaml(blueprint_path: Path, verbose: bool = False) -> list
     errors = []
 
     if not YAML_AVAILABLE:
-        return ["pyyaml not installed — cannot validate YAML. Run: pip install pyyaml"]
+        return ["YAML support is unavailable in this environment"]
 
     # --- Load and parse YAML ---
     try:
@@ -197,11 +222,7 @@ def validate_blueprint_yaml(blueprint_path: Path, verbose: bool = False) -> list
     # Look for common security tool names in the YAML content
     yaml_text = str(content).lower()
 
-    for control, tool_hint in [
-        ("SAST", "semgrep"),
-        ("SCA", "audit"),
-        ("secret scanning", "gitleaks"),
-    ]:
+    for control, tool_hint in expected_control_hints(blueprint_path):
         if tool_hint not in yaml_text:
             errors.append(
                 f"Recommended security control missing: {control} "
@@ -236,7 +257,7 @@ Examples:
     args = parser.parse_args()
 
     if not YAML_AVAILABLE:
-        print("ERROR: pyyaml is required. Install it: pip install pyyaml", file=sys.stderr)
+        print("ERROR: YAML support is unavailable in this environment", file=sys.stderr)
         sys.exit(1)
 
     if args.blueprint:

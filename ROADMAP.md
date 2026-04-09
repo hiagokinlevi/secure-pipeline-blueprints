@@ -39,7 +39,7 @@
 **Goal**: Add DAST, fuzzing, and dependency review controls.
 
 - [ ] DAST integration: OWASP ZAP API scan as a pipeline stage
-- [ ] GitHub Dependency Review Action for PR-level SCA
+- [x] GitHub Dependency Review Action for PR-level SCA
 - [ ] Fuzzing: Go fuzzing integration
 - [ ] License scanning: FOSSA or licensee integration
 - [ ] Reusable SAST workflow (callable from any repo)
