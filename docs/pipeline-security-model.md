@@ -22,7 +22,7 @@ Developer PR → CI Security Gates → Code Review → Merge → Deploy
 | Threat | Control | Mitigation |
 |---|---|---|
 | Developer commits credentials | Secret scanning (Gitleaks) | Detects secrets before merge |
-| Vulnerable dependencies (known CVEs) | SCA (pip-audit / npm audit) | Fails build on HIGH/CRITICAL with fix |
+| Vulnerable dependencies (known CVEs) | SCA (pip-audit / npm audit / govulncheck) | Fails build on high-risk or reachable vulnerabilities |
 | Code vulnerabilities (OWASP Top 10) | SAST (Semgrep) | Detects patterns associated with injection, auth issues, etc. |
 | Misconfigured cloud infrastructure | IaC scanning (Checkov / tfsec) | Catches S3 public access, unencrypted data, missing MFA |
 | Vulnerable OS packages in containers | Container scanning (Trivy) | Scans image layers before deployment |

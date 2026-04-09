@@ -9,6 +9,7 @@ This guide covers how to adopt secure-pipeline-blueprints in a GitHub Actions pr
 - The appropriate stack files:
   - Python: `requirements.txt` with hashes, `tests/` directory, `src/` directory
   - Node.js: `package.json` with jest, `package-lock.json`
+  - Go: `go.mod`, `go.sum`, and packages under `./...`
   - Terraform: `.tf` files
 
 ## Adopting a Blueprint
@@ -77,6 +78,21 @@ jobs:
     with:
       fetch_depth: 0        # Full git history (recommended)
       fail_on_leak: true    # Fail the job if secrets are found
+```
+
+Use the reusable SAST workflow when a repository needs Semgrep coverage without a full stack blueprint:
+
+```yaml
+jobs:
+  sast:
+    uses: hiagokinlevi/secure-pipeline-blueprints/.github/workflows/sast_semgrep.yml@main
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      semgrep_config: "p/owasp-top-ten p/secrets"
+      custom_config: ".semgrep/"
+      fail_on_findings: true
 ```
 
 ---

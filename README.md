@@ -41,10 +41,11 @@ Each blueprint includes:
 |---|---|---|
 | **Python** | `github-actions/python/full_pipeline.yml` | Semgrep, pip-audit, Gitleaks, ruff, pytest coverage |
 | **Node.js** | `github-actions/node/full_pipeline.yml` | Semgrep, npm audit, Gitleaks, ESLint security, jest coverage |
-| **Go** | Planned | Semgrep, govulncheck, Gitleaks, staticcheck |
+| **Go** | `github-actions/go/full_pipeline.yml` | Semgrep, govulncheck, Gitleaks, go vet, race detector, coverage |
 | **Terraform / IaC** | `github-actions/iac/terraform_pipeline.yml` | tflint, checkov, terraform validate, tfsec |
 | **Containers** | `github-actions/containers/container_scan.yml` | Trivy, Hadolint, Gitleaks |
 | **Dependency Review** | `github-actions/reusable/dependency_review.yml` | GitHub dependency review, PR summary, severity gate |
+| **Reusable SAST** | `github-actions/reusable/sast_semgrep.yml` | Semgrep, optional custom rules, SARIF upload, audit-only rollout |
 
 ---
 
@@ -71,6 +72,17 @@ Each blueprint includes:
 | Coverage gate | jest --coverage | Minimum 70% |
 | SAST | Semgrep (javascript + owasp-top-ten) | Fail on findings |
 | SCA | npm audit | Fail on HIGH/CRITICAL |
+| Secret scanning | Gitleaks | Fail on any finding |
+
+### Go Pipeline (`github-actions/go/full_pipeline.yml`)
+
+| Control | Tool | Gate |
+|---|---|---|
+| Static checks | go vet | Fail on vet findings |
+| Unit tests | go test -race | Required to pass |
+| Coverage gate | go tool cover | Minimum 70% |
+| SAST | Semgrep (Go + OWASP Top Ten + secrets) | Fail on findings |
+| SCA | govulncheck | Fail on reachable vulnerabilities |
 | Secret scanning | Gitleaks | Fail on any finding |
 
 ### Terraform / IaC Pipeline (`github-actions/iac/terraform_pipeline.yml`)
@@ -115,6 +127,13 @@ mkdir -p .github/workflows
 cp github-actions/iac/terraform_pipeline.yml .github/workflows/terraform-security.yml
 ```
 
+### GitHub Actions — Go
+
+```bash
+mkdir -p .github/workflows
+cp github-actions/go/full_pipeline.yml .github/workflows/secure-go.yml
+```
+
 ---
 
 ## How to Adopt in Your Team
@@ -152,6 +171,20 @@ jobs:
       pull-requests: write
 ```
 
+For organization-wide SAST coverage, use the reusable Semgrep workflow:
+
+```yaml
+jobs:
+  sast:
+    uses: hiagokinlevi/secure-pipeline-blueprints/.github/workflows/sast_semgrep.yml@main
+    permissions:
+      contents: read
+      security-events: write
+    with:
+      semgrep_config: "p/owasp-top-ten p/secrets"
+      fail_on_findings: true
+```
+
 ---
 
 ## Repository Structure
@@ -161,9 +194,10 @@ secure-pipeline-blueprints/
 ├── github-actions/
 │   ├── python/               # Python secure pipeline blueprint
 │   ├── node/                 # Node.js secure pipeline blueprint
+│   ├── go/                   # Go secure pipeline blueprint
 │   ├── iac/                  # Terraform/IaC security pipeline
 │   ├── containers/           # Container scanning pipeline
-│   └── reusable/             # Reusable workflow components (secret scan, dependency review)
+│   └── reusable/             # Reusable workflow components (secret scan, dependency review, SAST)
 ├── gitlab-ci/
 │   └── python/               # GitLab CI Python blueprint
 ├── controls/

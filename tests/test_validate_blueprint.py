@@ -232,6 +232,11 @@ class TestRealBlueprints(unittest.TestCase):
         blueprint_path = REPO_ROOT / "github-actions" / "node" / "full_pipeline.yml"
         self.assertTrue(blueprint_path.exists(), f"Blueprint not found: {blueprint_path}")
 
+    def test_go_github_actions_blueprint_exists(self):
+        """The Go GitHub Actions blueprint file should exist."""
+        blueprint_path = REPO_ROOT / "github-actions" / "go" / "full_pipeline.yml"
+        self.assertTrue(blueprint_path.exists(), f"Blueprint not found: {blueprint_path}")
+
     def test_terraform_blueprint_exists(self):
         """The Terraform GitHub Actions blueprint file should exist."""
         blueprint_path = REPO_ROOT / "github-actions" / "iac" / "terraform_pipeline.yml"

@@ -1,0 +1,95 @@
+# =============================================================================
+# Reusable Semgrep SAST Workflow - secure-pipeline-blueprints
+# =============================================================================
+# Runs Semgrep with pinned community rules, optional custom config, SARIF upload,
+# and configurable audit-only mode for teams adopting SAST gradually.
+#
+# How to use from another repository:
+#
+#   jobs:
+#     sast:
+#       uses: hiagokinlevi/secure-pipeline-blueprints/.github/workflows/sast_semgrep.yml@main
+#       permissions:
+#         contents: read
+#         security-events: write
+#
+# Notes:
+#   - Keep security-events=write when SARIF upload is enabled.
+#   - Use fail_on_findings=false only for a time-boxed burn-in period.
+#   - Provide custom_config for repository-local rules, such as .semgrep/.
+# =============================================================================
+
+name: Reusable Semgrep SAST
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_call:
+    inputs:
+      semgrep_config:
+        description: "Space-separated Semgrep rulesets to run"
+        type: string
+        default: "p/owasp-top-ten p/secrets"
+        required: false
+      custom_config:
+        description: "Optional repository-local Semgrep config path, for example .semgrep/"
+        type: string
+        default: ""
+        required: false
+      fail_on_findings:
+        description: "Fail the workflow when Semgrep finds blocking issues"
+        type: boolean
+        default: true
+        required: false
+      upload_sarif:
+        description: "Upload semgrep.sarif to GitHub code scanning"
+        type: boolean
+        default: true
+        required: false
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Build Semgrep config list
+        id: semgrep-config
+        shell: bash
+        run: |
+          CONFIG="${{ inputs.semgrep_config }}"
+          if [[ -n "${{ inputs.custom_config }}" ]]; then
+            CONFIG="$CONFIG ${{ inputs.custom_config }}"
+          fi
+          echo "config=$CONFIG" >> "$GITHUB_OUTPUT"
+
+      - name: Run Semgrep SAST
+        id: semgrep
+        uses: returntocorp/semgrep-action@v1
+        continue-on-error: ${{ !inputs.fail_on_findings }}
+        with:
+          config: ${{ steps.semgrep-config.outputs.config }}
+          generateSarif: "1"
+
+      - name: Upload Semgrep SARIF
+        if: always() && inputs.upload_sarif == true && hashFiles('semgrep.sarif') != ''
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+
+      - name: Fail when Semgrep findings are present
+        if: inputs.fail_on_findings == true && steps.semgrep.outcome == 'failure'
+        run: |
+          echo "::error::Semgrep found blocking SAST findings. Fix the findings before merging."
+          echo "::error::Use fail_on_findings=false only for short audit-only rollout windows."
+          exit 1

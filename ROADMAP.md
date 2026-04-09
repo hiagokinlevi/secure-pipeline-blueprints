@@ -22,7 +22,7 @@
 
 **Goal**: Cover Go, Java, and Azure DevOps.
 
-- [ ] Go secure pipeline blueprint (GitHub Actions)
+- [x] Go secure pipeline blueprint (GitHub Actions)
 - [ ] Java/Maven secure pipeline blueprint (GitHub Actions)
 - [ ] Java/Gradle secure pipeline blueprint (GitHub Actions)
 - [ ] Azure DevOps Python blueprint
@@ -42,7 +42,7 @@
 - [x] GitHub Dependency Review Action for PR-level SCA
 - [ ] Fuzzing: Go fuzzing integration
 - [ ] License scanning: FOSSA or licensee integration
-- [ ] Reusable SAST workflow (callable from any repo)
+- [x] Reusable SAST workflow (callable from any repo)
 - [ ] Reusable SCA workflow (callable from any repo)
 - [ ] SBOM generation: syft + cosign attestation
 

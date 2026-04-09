@@ -10,7 +10,7 @@ Software Composition Analysis (SCA) scans your application's third-party depende
 |---|---|---|
 | Python | pip-audit | OSV (Open Source Vulnerabilities) |
 | Node.js | npm audit | npm advisory database + OSV |
-| Go | govulncheck (planned) | Go vulnerability database |
+| Go | govulncheck | Go vulnerability database |
 | Java | Dependency-Check (planned) | NVD |
 | Containers | Trivy (in container blueprint) | OSV + NVD + GitHub Advisories |
 
@@ -60,6 +60,21 @@ npm audit fix
 
 # Fix including breaking changes (review carefully)
 npm audit fix --force
+```
+
+## Go: govulncheck
+
+`govulncheck` scans Go modules and call graphs against the Go vulnerability database. The Go blueprint runs it against `./...` so CI fails when a reachable vulnerable dependency or standard-library issue is present.
+
+### Remediation
+
+```bash
+# Review reachable vulnerabilities locally
+govulncheck ./...
+
+# Upgrade the affected module, then refresh module metadata
+go get example.com/affected/module@fixed.version
+go mod tidy
 ```
 
 ## Managing Accepted Risks

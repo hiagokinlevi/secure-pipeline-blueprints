@@ -44,6 +44,7 @@ secure-pipeline-blueprints/
 ├── github-actions/          # GitHub Actions blueprints
 │   ├── python/              # Python full pipeline
 │   ├── node/                # Node.js full pipeline
+│   ├── go/                  # Go full pipeline
 │   ├── iac/                 # Terraform/IaC security pipeline
 │   ├── containers/          # Container scanning pipeline
 │   └── reusable/            # Reusable workflow components
@@ -69,4 +70,6 @@ secure-pipeline-blueprints/
 | Containers | Detect vulnerabilities in images | Trivy, Hadolint |
 | Coverage | Prevent test coverage regression | pytest-cov, jest --coverage |
 
-Reusable workflows also include PR-time dependency review so manifest and lockfile changes are gated before merge, not only after the full SCA stage runs.
+Reusable workflows also include PR-time dependency review and Semgrep SAST so dependency changes and code vulnerabilities can be gated before merge without copying the full stack-specific pipeline.
+
+The Go blueprint now provides the same baseline for Go modules: `go vet`, `go test -race`, coverage gating, Semgrep Go rules, govulncheck, Gitleaks, and SARIF upload.

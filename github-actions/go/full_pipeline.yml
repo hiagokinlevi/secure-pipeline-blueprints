@@ -1,0 +1,153 @@
+# =============================================================================
+# Secure Go Pipeline Blueprint - secure-pipeline-blueprints
+# =============================================================================
+# This workflow implements a security-first CI pipeline for Go services and
+# command-line tools.
+#
+# Security controls included:
+#   - go test with race detector and coverage profile
+#   - go vet for standard static checks
+#   - SAST via Semgrep Go, OWASP Top Ten, and secrets rules
+#   - SCA via govulncheck against the Go vulnerability database
+#   - Secret scanning via Gitleaks on full git history
+#   - SARIF upload to GitHub Security tab for Semgrep findings
+#
+# Required files in your project:
+#   - go.mod and go.sum committed to the repository
+#   - Go packages under ./...
+#
+# Usage:
+#   Copy to .github/workflows/secure-go.yml in your project.
+#   Adjust GO_VERSION and coverage thresholds to match your baseline.
+# =============================================================================
+
+name: Secure Go Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: read
+
+env:
+  GO_VERSION: "1.22"
+  COVERAGE_THRESHOLD: "70"
+
+jobs:
+  test:
+    name: Vet & Test (Race + Coverage)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Download dependencies from lockfile
+        run: |
+          # go mod download uses go.mod/go.sum as the reproducible dependency baseline.
+          go mod download
+
+      - name: Run go vet
+        run: |
+          # go vet catches suspicious constructs such as bad format strings and unsafe copies.
+          go vet ./...
+
+      - name: Run tests with race detector and coverage
+        run: |
+          # -race catches data races in concurrent code during tests.
+          # -coverprofile records line coverage for the threshold gate and artifacts.
+          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Enforce coverage threshold
+        run: |
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub(/%/, "", $3); print $3}')"
+          awk -v coverage="$coverage" -v threshold="${COVERAGE_THRESHOLD}" 'BEGIN {
+            if (coverage + 0 < threshold + 0) {
+              printf("coverage %.2f%% is below required %.2f%%\n", coverage, threshold)
+              exit 1
+            }
+            printf("coverage %.2f%% meets required %.2f%%\n", coverage, threshold)
+          }'
+
+      - name: Upload coverage profile
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: go-coverage-profile
+          path: coverage.out
+          retention-days: 30
+
+  sast:
+    name: SAST (Semgrep)
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep SAST
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: >-
+            p/golang
+            p/owasp-top-ten
+            p/secrets
+          generateSarif: "1"
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload Semgrep SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep-go
+
+  sca:
+    name: SCA (govulncheck)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: ${{ env.GO_VERSION }}
+          go-package: ./...
+
+  secret-scan:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code (full history)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: --config=controls/secrets/gitleaks_config.toml

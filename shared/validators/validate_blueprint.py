@@ -132,10 +132,18 @@ def expected_control_hints(blueprint_path: Path) -> list[tuple[str, str]]:
 
     if "github-actions/reusable/secret_scan.yml" in path_str:
         return [("secret scanning", "gitleaks")]
+    if "github-actions/reusable/sast_semgrep.yml" in path_str:
+        return [("SAST", "semgrep")]
     if "github-actions/reusable/dependency_review.yml" in path_str:
         return []
     if "github-actions/containers/" in path_str:
         return [("secret scanning", "gitleaks")]
+    if "github-actions/go/" in path_str:
+        return [
+            ("SAST", "semgrep"),
+            ("SCA", "govulncheck"),
+            ("secret scanning", "gitleaks"),
+        ]
     if "github-actions/iac/" in path_str:
         return [("secret scanning", "gitleaks")]
     if "gitlab-ci/" in path_str:

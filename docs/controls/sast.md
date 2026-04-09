@@ -44,6 +44,23 @@ Semgrep outputs SARIF, which is uploaded to the GitHub Security tab. This allows
 - PR annotations with findings inline in the diff
 - Alerting when new findings are introduced
 
+## Reusable Workflow
+
+Use `github-actions/reusable/sast_semgrep.yml` when multiple repositories should share the same SAST gate without copying a full pipeline file. The workflow runs Semgrep with `p/owasp-top-ten` and `p/secrets` by default, accepts a repository-local `custom_config` such as `.semgrep/`, and uploads `semgrep.sarif` when `upload_sarif` is enabled.
+
+Minimal caller:
+
+```yaml
+jobs:
+  sast:
+    uses: hiagokinlevi/secure-pipeline-blueprints/.github/workflows/sast_semgrep.yml@main
+    permissions:
+      contents: read
+      security-events: write
+```
+
+For burn-in, set `fail_on_findings: false` for a time-boxed rollout window, review findings in the Security tab, then return to the default blocking mode.
+
 ## Handling Findings
 
 ### True Positive
