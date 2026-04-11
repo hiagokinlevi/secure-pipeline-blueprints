@@ -42,6 +42,7 @@ class TestValidateGitHubActionsYAML(unittest.TestCase):
             "jobs": {
                 "test": {
                     "runs-on": "ubuntu-latest",
+                    "timeout-minutes": 15,
                     "steps": [
                         {"name": "Checkout", "uses": "actions/checkout@v4"},
                         {"name": "Run tests", "run": "pytest tests/"},
@@ -117,6 +118,24 @@ class TestValidateGitHubActionsYAML(unittest.TestCase):
         workflow["jobs"]["test"]["steps"] = []
         issues = validate_github_actions_yaml(workflow)
         self.assertTrue(any("steps" in i.lower() for i in issues))
+
+    def test_job_without_timeout_minutes_returns_issue(self):
+        """Runner jobs without timeout-minutes should warn."""
+        workflow = self._valid_workflow()
+        del workflow["jobs"]["test"]["timeout-minutes"]
+        issues = validate_github_actions_yaml(workflow)
+        self.assertTrue(
+            any("timeout-minutes" in i.lower() for i in issues),
+            f"Expected timeout warning, got: {issues}",
+        )
+
+    def test_job_with_timeout_minutes_is_accepted(self):
+        """Runner jobs with timeout-minutes should not warn."""
+        workflow = self._valid_workflow()
+        workflow["jobs"]["test"]["timeout-minutes"] = 15
+        issues = validate_github_actions_yaml(workflow)
+        timeout_issues = [issue for issue in issues if "timeout-minutes" in issue.lower()]
+        self.assertEqual(timeout_issues, [])
 
 
 class TestValidateGitLabCIYAML(unittest.TestCase):

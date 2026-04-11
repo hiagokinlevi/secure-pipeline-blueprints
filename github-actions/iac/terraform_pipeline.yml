@@ -58,6 +58,7 @@ jobs:
   validate:
     name: Terraform Validate & Format
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -101,6 +102,7 @@ jobs:
   lint:
     name: Terraform Lint (tflint)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: validate  # Only lint if validation passes
 
     steps:
@@ -134,6 +136,7 @@ jobs:
   checkov:
     name: IaC Security (Checkov)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: validate
 
     steps:
@@ -171,6 +174,7 @@ jobs:
   tfsec:
     name: IaC Security (tfsec)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: validate
 
     steps:
@@ -201,6 +205,7 @@ jobs:
   secret-scan:
     name: Secret Scanning (Gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code (full history)

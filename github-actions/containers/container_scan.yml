@@ -51,6 +51,7 @@ jobs:
   dockerfile-lint:
     name: Dockerfile Lint (Hadolint)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout code
@@ -78,6 +79,7 @@ jobs:
   trivy-fs:
     name: Trivy Filesystem Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -113,6 +115,7 @@ jobs:
   build:
     name: Build Docker Image
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: dockerfile-lint  # Only build if Dockerfile passes linting
     outputs:
       image-tag: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
@@ -145,6 +148,7 @@ jobs:
   trivy-image:
     name: Trivy Image Scan
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: build  # Scan the built image
 
     steps:
@@ -196,6 +200,7 @@ jobs:
   secret-scan:
     name: Secret Scanning (Gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code (full history)

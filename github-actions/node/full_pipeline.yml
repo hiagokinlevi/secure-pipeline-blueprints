@@ -45,6 +45,7 @@ jobs:
   test:
     name: Lint & Test (Coverage Gate)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout code
@@ -102,6 +103,7 @@ jobs:
   sast:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: test  # Run SAST only if tests pass
 
     steps:
@@ -140,6 +142,7 @@ jobs:
   sca:
     name: SCA (npm audit)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code
@@ -183,6 +186,7 @@ jobs:
   secret-scan:
     name: Secret Scanning (Gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
       - name: Checkout code (full history)

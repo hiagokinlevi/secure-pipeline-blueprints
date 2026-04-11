@@ -110,6 +110,12 @@ def validate_github_actions_yaml(content: dict) -> list[str]:
         if not isinstance(job_config, dict):
             continue
 
+        if "runs-on" in job_config and "timeout-minutes" not in job_config:
+            issues.append(
+                f"Job '{job_name}' has no timeout-minutes. "
+                "Add an explicit timeout to bound CI runtime and reduce runaway build risk."
+            )
+
         steps = job_config.get("steps", [])
         if not steps:
             issues.append(f"Job '{job_name}' has no steps")
