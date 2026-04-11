@@ -157,7 +157,8 @@ For organizations with multiple repositories, use the reusable workflows in `git
 jobs:
   secret-scan:
     uses: hiagokinlevi/secure-pipeline-blueprints/.github/workflows/secret_scan.yml@main
-    secrets: inherit
+    permissions:
+      contents: read
 ```
 
 For PR-time dependency change blocking, use the reusable dependency review workflow:

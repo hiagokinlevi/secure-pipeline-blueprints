@@ -74,7 +74,8 @@ on: [push, pull_request]
 jobs:
   secret-scan:
     uses: hiagokinlevi/secure-pipeline-blueprints/.github/workflows/reusable/secret_scan.yml@main
-    secrets: inherit
+    permissions:
+      contents: read
     with:
       fetch_depth: 0        # Full git history (recommended)
       fail_on_leak: true    # Fail the job if secrets are found
