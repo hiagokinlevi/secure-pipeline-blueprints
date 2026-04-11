@@ -62,6 +62,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Build Semgrep config list
         id: semgrep-config

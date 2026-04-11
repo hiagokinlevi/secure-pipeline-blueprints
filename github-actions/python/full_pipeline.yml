@@ -51,6 +51,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4  # Pinned to major version for stability
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -104,6 +106,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Run Semgrep SAST
         # Semgrep scans for security vulnerabilities in source code.
@@ -144,6 +148,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -224,6 +230,7 @@ jobs:
           # Fetch full git history — Gitleaks needs this to scan all commits,
           # not just the current state. Shallow clones miss secrets in old commits.
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Run Gitleaks secret scan
         # Gitleaks scans for hardcoded secrets: API keys, tokens, passwords, etc.
