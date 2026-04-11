@@ -91,6 +91,20 @@ def _workflow_with_step(step: dict, perms=None):
     return wf
 
 
+def _workflow_with_reusable_job(job: dict, perms=None):
+    """Workflow containing a single reusable-workflow job."""
+    wf = {
+        "name": "test",
+        "on": "push",
+        "jobs": {
+            "job1": job,
+        },
+    }
+    if perms is not None:
+        wf["permissions"] = perms
+    return wf
+
+
 def _check_ids(result: GHPResult):
     """Return the set of check IDs that fired."""
     return {f.check_id for f in result.findings}
@@ -417,72 +431,93 @@ def test_ghp004_fires_once_even_with_multiple_jobs():
 
 
 # ===========================================================================
-# Section 5 — GHP-005: secrets:inherit in uses: step
+# Section 5 — GHP-005: secrets:inherit in reusable workflow call jobs
 # ===========================================================================
 
-def test_ghp005_fires_on_secrets_inherit_in_uses_step():
-    step = {"uses": "org/repo/.github/workflows/deploy.yml@main", "with": {"secrets": "inherit"}}
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+def test_ghp005_fires_on_job_level_secrets_inherit():
+    job = {
+        "uses": "org/repo/.github/workflows/deploy.yml@main",
+        "secrets": "inherit",
+    }
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
     assert "GHP-005" in _check_ids(result)
 
 
 def test_ghp005_does_not_fire_when_no_uses_key():
-    # A run step with secrets:inherit in with should NOT fire (not a reusable workflow call)
-    step = {"run": "echo hello", "with": {"secrets": "inherit"}}
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+    job = {
+        "runs-on": "ubuntu-latest",
+        "secrets": "inherit",
+        "steps": [{"run": "echo hello"}],
+    }
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
     assert "GHP-005" not in _check_ids(result)
 
 
-def test_ghp005_does_not_fire_on_uses_step_without_secrets_inherit():
-    step = {"uses": "actions/checkout@v4", "with": {"ref": "main"}}
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+def test_ghp005_does_not_fire_when_reusable_job_uses_explicit_secret_mapping():
+    job = {
+        "uses": "org/repo/.github/workflows/ci.yml@main",
+        "secrets": {"deploy_token": "${{ secrets.DEPLOY_TOKEN }}"},
+    }
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
     assert "GHP-005" not in _check_ids(result)
 
 
-def test_ghp005_does_not_fire_on_uses_step_with_no_with_block():
-    step = {"uses": "actions/checkout@v4"}
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+def test_ghp005_does_not_fire_on_reusable_job_with_no_secrets_key():
+    job = {"uses": "org/repo/.github/workflows/deploy.yml@main"}
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
     assert "GHP-005" not in _check_ids(result)
 
 
 def test_ghp005_does_not_fire_when_secrets_value_is_not_inherit():
-    step = {"uses": "org/repo/.github/workflows/ci.yml@main", "with": {"secrets": "MY_SECRET"}}
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+    job = {
+        "uses": "org/repo/.github/workflows/ci.yml@main",
+        "secrets": "MY_SECRET",
+    }
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
     assert "GHP-005" not in _check_ids(result)
 
 
 def test_ghp005_severity_is_high():
-    step = {"uses": "org/repo/.github/workflows/deploy.yml@main", "with": {"secrets": "inherit"}}
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+    job = {
+        "uses": "org/repo/.github/workflows/deploy.yml@main",
+        "secrets": "inherit",
+    }
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
     finding = next(f for f in result.findings if f.check_id == "GHP-005")
     assert finding.severity == "HIGH"
 
 
 def test_ghp005_weight_is_25():
-    step = {"uses": "org/repo/.github/workflows/deploy.yml@main", "with": {"secrets": "inherit"}}
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+    job = {
+        "uses": "org/repo/.github/workflows/deploy.yml@main",
+        "secrets": "inherit",
+    }
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
     finding = next(f for f in result.findings if f.check_id == "GHP-005")
     assert finding.weight == 25
 
 
-def test_ghp005_fires_once_even_with_multiple_matching_steps():
-    steps = [
-        {"uses": "org/repo/.github/workflows/a.yml@main", "with": {"secrets": "inherit"}},
-        {"uses": "org/repo/.github/workflows/b.yml@main", "with": {"secrets": "inherit"}},
-    ]
+def test_ghp005_fires_once_even_with_multiple_matching_jobs():
     wf = {
         "name": "t",
         "on": "push",
         "permissions": {"contents": "read"},
         "jobs": {
-            "job1": {"runs-on": "ubuntu-latest", "steps": steps}
+            "job1": {
+                "uses": "org/repo/.github/workflows/a.yml@main",
+                "secrets": "inherit",
+            },
+            "job2": {
+                "uses": "org/repo/.github/workflows/b.yml@main",
+                "secrets": "inherit",
+            },
         },
     }
     result = analyze(wf)
@@ -491,22 +526,26 @@ def test_ghp005_fires_once_even_with_multiple_matching_steps():
 
 
 def test_ghp005_detail_mentions_secrets():
-    step = {"uses": "org/repo/.github/workflows/deploy.yml@main", "with": {"secrets": "inherit"}}
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+    job = {
+        "uses": "org/repo/.github/workflows/deploy.yml@main",
+        "secrets": "inherit",
+    }
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
     finding = next(f for f in result.findings if f.check_id == "GHP-005")
     assert "secrets" in finding.detail.lower()
 
 
-def test_ghp005_fires_when_uses_step_has_named_step():
-    step = {
-        "name": "Call deploy workflow",
-        "uses": "org/repo/.github/workflows/deploy.yml@main",
-        "with": {"secrets": "inherit"},
+def test_ghp005_detail_mentions_job_id_and_called_workflow():
+    job = {
+        "uses": "./.github/workflows/deploy.yml",
+        "secrets": "inherit",
     }
-    wf = _workflow_with_step(step, perms={"contents": "read"})
+    wf = _workflow_with_reusable_job(job, perms={"contents": "read"})
     result = analyze(wf)
-    assert "GHP-005" in _check_ids(result)
+    finding = next(f for f in result.findings if f.check_id == "GHP-005")
+    assert "job1" in finding.detail
+    assert "./.github/workflows/deploy.yml" in finding.detail
 
 
 # ===========================================================================
@@ -678,20 +717,19 @@ def test_permissions_score_is_100_on_clean_workflow():
 def test_risk_score_capped_at_100():
     # write-all(45) + id-token:write(15) + pull-requests:write(20) + packages:write(15)
     # + secrets:inherit(25) = 120 > 100 → should cap at 100
-    step = {"uses": "org/repo/.github/workflows/a.yml@main", "with": {"secrets": "inherit"}}
     wf = {
         "name": "t",
         "on": "push",
         "permissions": "write-all",
         "jobs": {
             "job1": {
-                "runs-on": "ubuntu-latest",
+                "uses": "org/repo/.github/workflows/a.yml@main",
+                "secrets": "inherit",
                 "permissions": {
                     "id-token": "write",
                     "pull-requests": "write",
                     "packages": "write",
                 },
-                "steps": [step],
             }
         },
     }
@@ -700,20 +738,19 @@ def test_risk_score_capped_at_100():
 
 
 def test_permissions_score_is_zero_when_risk_is_100():
-    step = {"uses": "org/repo/.github/workflows/a.yml@main", "with": {"secrets": "inherit"}}
     wf = {
         "name": "t",
         "on": "push",
         "permissions": "write-all",
         "jobs": {
             "job1": {
-                "runs-on": "ubuntu-latest",
+                "uses": "org/repo/.github/workflows/a.yml@main",
+                "secrets": "inherit",
                 "permissions": {
                     "id-token": "write",
                     "pull-requests": "write",
                     "packages": "write",
                 },
-                "steps": [step],
             }
         },
     }
@@ -1014,7 +1051,6 @@ def test_workflow_with_empty_jobs_dict():
 
 
 def test_multiple_checks_fire_simultaneously():
-    step = {"uses": "org/repo/.github/workflows/deploy.yml@main", "with": {"secrets": "inherit"}}
     wf = {
         "name": "t",
         "on": "pull_request",
@@ -1025,7 +1061,10 @@ def test_multiple_checks_fire_simultaneously():
             "packages": "write",
         },
         "jobs": {
-            "job1": {"runs-on": "ubuntu-latest", "steps": [step]},
+            "job1": {
+                "uses": "org/repo/.github/workflows/deploy.yml@main",
+                "secrets": "inherit",
+            },
         },
     }
     result = analyze(wf)
@@ -1039,12 +1078,14 @@ def test_multiple_checks_fire_simultaneously():
 
 
 def test_ghp002_and_ghp005_can_fire_together():
-    step = {"uses": "org/repo/.github/workflows/deploy.yml@main", "with": {"secrets": "inherit"}}
     wf = {
         "name": "t",
         "on": "push",
         "jobs": {
-            "job1": {"runs-on": "ubuntu-latest", "steps": [step]},
+            "job1": {
+                "uses": "org/repo/.github/workflows/deploy.yml@main",
+                "secrets": "inherit",
+            },
         },
     }
     result = analyze(wf)

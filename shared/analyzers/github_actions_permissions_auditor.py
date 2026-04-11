@@ -20,7 +20,7 @@ _CHECK_WEIGHTS: Dict[str, int] = {
     "GHP-002": 25,  # No top-level permissions block (legacy permissive default) — HIGH
     "GHP-003": 25,  # contents: write on a PR-triggered workflow — HIGH
     "GHP-004": 15,  # id-token: write present (unnecessary for most workflows) — MEDIUM
-    "GHP-005": 25,  # secrets: inherit in a uses: workflow_call step — HIGH
+    "GHP-005": 25,  # secrets: inherit in a reusable workflow call job — HIGH
     "GHP-006": 20,  # pull-requests: write permission — HIGH
     "GHP-007": 15,  # packages: write permission — MEDIUM
 }
@@ -31,7 +31,7 @@ _CHECK_TITLES: Dict[str, str] = {
     "GHP-002": "Missing top-level permissions block",
     "GHP-003": "contents:write on a pull_request-triggered workflow",
     "GHP-004": "id-token:write permission present",
-    "GHP-005": "secrets:inherit in reusable workflow call step",
+    "GHP-005": "secrets:inherit in reusable workflow call job",
     "GHP-006": "pull-requests:write permission present",
     "GHP-007": "packages:write permission present",
 }
@@ -185,20 +185,17 @@ def _has_pr_trigger(workflow: dict) -> bool:
     return False
 
 
-def _iter_all_steps(workflow: dict):
-    """Yield every step dict from every job in the workflow."""
+def _iter_reusable_workflow_jobs(workflow: dict):
+    """Yield reusable workflow call jobs declared with job-level ``uses``."""
     jobs = workflow.get("jobs") or {}
     if not isinstance(jobs, dict):
         return
-    for job in jobs.values():
+    for job_id, job in jobs.items():
         if not isinstance(job, dict):
             continue
-        steps = job.get("steps") or []
-        if not isinstance(steps, list):
+        if not isinstance(job.get("uses"), str):
             continue
-        for step in steps:
-            if isinstance(step, dict):
-                yield step
+        yield job_id, job
 
 
 # ---------------------------------------------------------------------------
@@ -283,26 +280,21 @@ def _check_ghp004(all_perms: List[WorkflowPermission]) -> Optional[GHPFinding]:
 
 
 def _check_ghp005(workflow: dict) -> Optional[GHPFinding]:
-    """GHP-005: secrets:inherit in a uses: step."""
-    for step in _iter_all_steps(workflow):
-        # Only applies to reusable workflow call steps (uses: key present)
-        if "uses" not in step:
-            continue
-        with_block = step.get("with")
-        if isinstance(with_block, dict):
-            if with_block.get("secrets") == "inherit":
-                return GHPFinding(
-                    check_id="GHP-005",
-                    severity=_CHECK_SEVERITY["GHP-005"],
-                    title=_CHECK_TITLES["GHP-005"],
-                    detail=(
-                        f"Step '{step.get('name', step.get('uses', 'unknown'))}' passes "
-                        "'secrets: inherit' to a reusable workflow call. This forwards "
-                        "all parent secrets to the child workflow. Pass only the specific "
-                        "secrets the called workflow requires."
-                    ),
-                    weight=_CHECK_WEIGHTS["GHP-005"],
-                )
+    """GHP-005: job-level secrets:inherit on a reusable workflow call."""
+    for job_id, job in _iter_reusable_workflow_jobs(workflow):
+        if job.get("secrets") == "inherit":
+            return GHPFinding(
+                check_id="GHP-005",
+                severity=_CHECK_SEVERITY["GHP-005"],
+                title=_CHECK_TITLES["GHP-005"],
+                detail=(
+                    f"Job '{job_id}' forwards 'secrets: inherit' to reusable workflow "
+                    f"'{job.get('uses', 'unknown')}'. This exposes every secret available "
+                    "to the parent workflow. Pass only the specific secrets the called "
+                    "workflow requires."
+                ),
+                weight=_CHECK_WEIGHTS["GHP-005"],
+            )
     return None
 
 
