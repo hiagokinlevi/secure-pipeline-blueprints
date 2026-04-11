@@ -137,18 +137,29 @@ class TPAResult:
 def _parse_action_refs(workflow: dict) -> List[ActionRef]:
     """
     Walk all jobs and steps in *workflow* and collect every third-party
-    `uses:` reference.
+    `uses:` reference, including reusable workflow call jobs.
 
     Rules:
-    - The step must have a `uses` key.
+    - A job-level or step-level entry must have a `uses` key.
     - The `uses` value must contain both `/` and `@` (looks like an action ref).
-    - Steps whose `uses` starts with `./.` are local actions and are excluded.
+    - Local action and local reusable workflow paths starting with `./` are excluded.
     """
     refs: List[ActionRef] = []
     jobs: dict = workflow.get("jobs", {})
 
     for job_id, job in jobs.items():
-        steps = job.get("steps", []) if isinstance(job, dict) else []
+        if not isinstance(job, dict):
+            continue
+
+        job_uses: Optional[str] = job.get("uses")
+        if isinstance(job_uses, str):
+            is_docker = job_uses.startswith("docker://")
+            if not job_uses.startswith("./") and (
+                is_docker or ("/" in job_uses and "@" in job_uses)
+            ):
+                refs.append(ActionRef(job_id=job_id, step_name="", uses=job_uses))
+
+        steps = job.get("steps", []) or []
         for step in steps:
             if not isinstance(step, dict):
                 continue
@@ -156,7 +167,7 @@ def _parse_action_refs(workflow: dict) -> List[ActionRef]:
             if not uses or not isinstance(uses, str):
                 continue
             # Exclude local actions
-            if uses.startswith("./."):
+            if uses.startswith("./"):
                 continue
             # Determine whether this is a valid reference to include:
             # - docker:// prefixed refs are always valid (digest/@ is optional)

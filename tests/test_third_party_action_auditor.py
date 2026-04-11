@@ -209,12 +209,48 @@ class TestParseActionRefs:
         refs = _parse_action_refs(wf)
         assert len(refs) == 2
 
+    def test_job_level_reusable_workflow_ref_included(self):
+        wf = {
+            "jobs": {
+                "scan": {
+                    "uses": "octo-org/security/.github/workflows/reusable.yml@v1",
+                }
+            }
+        }
+        refs = _parse_action_refs(wf)
+        assert len(refs) == 1
+        assert refs[0].job_id == "scan"
+        assert refs[0].step_name == ""
+        assert refs[0].uses == "octo-org/security/.github/workflows/reusable.yml@v1"
+
+    def test_local_reusable_workflow_ref_excluded(self):
+        wf = {
+            "jobs": {
+                "scan": {
+                    "uses": "./.github/workflows/reusable.yml",
+                }
+            }
+        }
+        refs = _parse_action_refs(wf)
+        assert refs == []
+
 
 # ---------------------------------------------------------------------------
 # TPA-001: Mutable branch references
 # ---------------------------------------------------------------------------
 
 class TestTPA001:
+    def test_job_level_reusable_workflow_at_main_flagged(self):
+        wf = {
+            "jobs": {
+                "scan": {
+                    "uses": "octo-org/security/.github/workflows/reusable.yml@main",
+                }
+            }
+        }
+        result = audit(wf)
+        assert any(f.check_id == "TPA-001" for f in result.findings)
+
     def test_at_main_flagged(self):
         wf = _make_workflow([[_uses_step("org/action@main")]])
         result = audit(wf)
