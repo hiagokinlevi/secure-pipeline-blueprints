@@ -13,7 +13,7 @@ Checks performed:
   - PA006 MEDIUM:   'continue-on-error: true' on security-relevant steps
   - PA007 MEDIUM:   Use of deprecated 'set-env' or 'add-path' workflow commands
   - PA008 LOW:      Missing 'timeout-minutes' on jobs (allows runaway builds)
-  - PA009 LOW:      'fetch-depth: 0' without documented reason (exposes full history)
+  - PA009 LOW:      'fetch-depth: 0' in jobs that do not appear to require full history
 
 Usage:
     from shared.validators.pipeline_auditor import audit_workflow_file, AuditResult
@@ -289,6 +289,32 @@ def _check_permissions(workflow: dict, result: AuditResult) -> None:
         ))
 
 
+def _job_needs_full_history(job_name: str, job: dict) -> bool:
+    """Return True when the job appears to require the full git history."""
+    job_text = f"{job_name} {job.get('name', '')}".lower()
+    if "gitleaks" in job_text or "secret scan" in job_text:
+        return True
+
+    for step in job.get("steps", []) or []:
+        if not isinstance(step, dict):
+            continue
+
+        step_name = (step.get("name") or "").lower()
+        uses = (step.get("uses") or "").lower()
+        run = (step.get("run") or "").lower()
+
+        if "gitleaks" in step_name or "gitleaks" in uses:
+            return True
+
+        if any(
+            git_command in run
+            for git_command in ("git log", "git diff", "git rev-list", "git describe")
+        ):
+            return True
+
+    return False
+
+
 def _check_jobs(workflow: dict, result: AuditResult, raw_content: str) -> None:
     """Run per-job and per-step checks."""
     jobs = workflow.get("jobs") or {}
@@ -310,6 +336,7 @@ def _check_jobs(workflow: dict, result: AuditResult, raw_content: str) -> None:
                 ),
             ))
 
+        job_needs_full_history = _job_needs_full_history(job_name, job)
         steps = job.get("steps") or []
         for i, step in enumerate(steps):
             if not isinstance(step, dict):
@@ -317,13 +344,14 @@ def _check_jobs(workflow: dict, result: AuditResult, raw_content: str) -> None:
 
             step_loc = f"jobs.{job_name}.steps[{i}]"
             step_name = step.get("name", f"step-{i}")
-            _check_step(step, step_loc, step_name, result)
+            _check_step(step, step_loc, step_name, job_needs_full_history, result)
 
 
 def _check_step(
     step: dict,
     location: str,
     step_name: str,
+    job_needs_full_history: bool,
     result: AuditResult,
 ) -> None:
     """Run security checks on a single workflow step."""
@@ -357,6 +385,31 @@ def _check_step(
                     ),
                     evidence=f"uses: {uses}",
                 ))
+
+    # PA009: Full history checkout in jobs that do not appear to need it
+    with_params = step.get("with", {}) or {}
+    fetch_depth = with_params.get("fetch-depth")
+    if (
+        isinstance(uses, str)
+        and uses.startswith("actions/checkout@")
+        and fetch_depth in (0, "0")
+        and not job_needs_full_history
+    ):
+        result.findings.append(PipelineFinding(
+            rule_id="PA009",
+            severity="low",
+            location=location,
+            message=(
+                f"Step '{step_name}' fetches the full git history in a job that does "
+                "not appear to require it"
+            ),
+            remediation=(
+                "Use 'fetch-depth: 1' by default. Reserve 'fetch-depth: 0' for jobs "
+                "that truly need full history (for example, historical secret scanning "
+                "or git metadata analysis), and document the reason inline."
+            ),
+            evidence="fetch-depth: 0",
+        ))
 
     # PA004: Secret echoed in run script
     if run and _SECRET_ECHO_RE.search(run):

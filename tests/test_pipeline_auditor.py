@@ -697,6 +697,64 @@ class TestPA008TimeoutMinutes(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# PA009: Unnecessary full-history checkout
+# ---------------------------------------------------------------------------
+
+
+class TestPA009FullHistoryCheckout(unittest.TestCase):
+    """PA009: Full-history checkout should be limited to jobs that need it."""
+
+    def test_pa009_fires_for_regular_build_job_with_fetch_depth_zero(self):
+        """A normal build job should not fetch the full repo history."""
+        path = _write_workflow("""
+            name: Excessive History
+            on:
+              push:
+            permissions:
+              contents: read
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                timeout-minutes: 20
+                steps:
+                  - name: Checkout code
+                    uses: actions/checkout@v4
+                    with:
+                      fetch-depth: 0
+                  - name: Run tests
+                    run: pytest
+        """)
+        result = audit_workflow_file(path)
+        pa009 = _findings_by_rule(result, "PA009")
+        self.assertTrue(pa009)
+        self.assertEqual(pa009[0].severity, "low")
+        self.assertIn("steps[0]", pa009[0].location)
+
+    def test_pa009_not_fired_for_gitleaks_secret_scan_job(self):
+        """Gitleaks jobs need full history to catch deleted historical secrets."""
+        path = _write_workflow("""
+            name: Secret Scan
+            on:
+              push:
+            permissions:
+              contents: read
+            jobs:
+              secret-scan:
+                runs-on: ubuntu-latest
+                timeout-minutes: 15
+                steps:
+                  - name: Checkout code (full history)
+                    uses: actions/checkout@v4
+                    with:
+                      fetch-depth: 0
+                  - name: Run Gitleaks
+                    uses: gitleaks/gitleaks-action@v2
+        """)
+        result = audit_workflow_file(path)
+        self.assertFalse(_findings_by_rule(result, "PA009"))
+
+
+# ---------------------------------------------------------------------------
 # AuditResult properties
 # ---------------------------------------------------------------------------
 
