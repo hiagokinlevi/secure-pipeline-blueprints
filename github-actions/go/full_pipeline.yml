@@ -48,6 +48,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Go
@@ -101,6 +102,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Run Semgrep SAST
@@ -130,6 +132,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Go

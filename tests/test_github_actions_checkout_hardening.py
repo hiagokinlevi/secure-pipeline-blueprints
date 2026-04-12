@@ -34,3 +34,18 @@ def test_github_actions_checkouts_disable_persisted_credentials():
         "Each actions/checkout@v4 step must set with.persist-credentials to false: "
         + ", ".join(offenders)
     )
+
+
+def test_github_actions_checkouts_set_explicit_fetch_depth():
+    offenders = []
+    for workflow_path, job_name, index, step in _iter_checkout_steps():
+        with_block = step.get("with", {})
+        if "fetch-depth" not in with_block:
+            offenders.append(
+                f"{workflow_path.relative_to(REPO_ROOT)}::{job_name}::step-{index}"
+            )
+
+    assert not offenders, (
+        "Each actions/checkout@v4 step must set with.fetch-depth explicitly: "
+        + ", ".join(offenders)
+    )

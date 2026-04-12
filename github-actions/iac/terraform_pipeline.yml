@@ -64,6 +64,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up Terraform
@@ -109,6 +110,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Set up tflint
@@ -143,6 +145,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Run Checkov
@@ -181,6 +184,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: false
 
       - name: Run tfsec
