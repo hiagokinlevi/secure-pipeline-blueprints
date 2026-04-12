@@ -16,7 +16,7 @@ from typing import Dict, List, Optional
 # Check IDs and their weights used for risk scoring
 # ---------------------------------------------------------------------------
 _CHECK_WEIGHTS: Dict[str, int] = {
-    "GHP-001": 45,  # permissions: write-all at workflow level — CRITICAL
+    "GHP-001": 45,  # permissions: write-all at workflow or job level — CRITICAL
     "GHP-002": 25,  # No top-level permissions block (legacy permissive default) — HIGH
     "GHP-003": 25,  # contents: write on a PR-triggered workflow — HIGH
     "GHP-004": 15,  # id-token: write present (unnecessary for most workflows) — MEDIUM
@@ -27,7 +27,7 @@ _CHECK_WEIGHTS: Dict[str, int] = {
 
 # Human-readable titles for each check
 _CHECK_TITLES: Dict[str, str] = {
-    "GHP-001": "Workflow-level write-all permissions",
+    "GHP-001": "Workflow or job-level write-all permissions",
     "GHP-002": "Missing top-level permissions block",
     "GHP-003": "contents:write on a pull_request-triggered workflow",
     "GHP-004": "id-token:write permission present",
@@ -198,12 +198,22 @@ def _iter_reusable_workflow_jobs(workflow: dict):
         yield job_id, job
 
 
+def _iter_jobs(workflow: dict):
+    """Yield normalized ``(job_id, job_dict)`` pairs for every workflow job."""
+    jobs = workflow.get("jobs") or {}
+    if not isinstance(jobs, dict):
+        return
+    for job_id, job in jobs.items():
+        if isinstance(job, dict):
+            yield job_id, job
+
+
 # ---------------------------------------------------------------------------
 # Individual check functions — each returns an Optional[GHPFinding]
 # ---------------------------------------------------------------------------
 
 def _check_ghp001(workflow: dict) -> Optional[GHPFinding]:
-    """GHP-001: permissions: write-all at workflow level."""
+    """GHP-001: permissions: write-all at workflow or job level."""
     if workflow.get("permissions") == "write-all":
         return GHPFinding(
             check_id="GHP-001",
@@ -213,6 +223,20 @@ def _check_ghp001(workflow: dict) -> Optional[GHPFinding]:
                 "The top-level 'permissions' key is set to 'write-all', granting "
                 "write access across every GITHUB_TOKEN scope. Restrict permissions "
                 "to only the scopes actually required by each job."
+            ),
+            weight=_CHECK_WEIGHTS["GHP-001"],
+        )
+    for job_id, job in _iter_jobs(workflow):
+        if job.get("permissions") != "write-all":
+            continue
+        return GHPFinding(
+            check_id="GHP-001",
+            severity=_CHECK_SEVERITY["GHP-001"],
+            title=_CHECK_TITLES["GHP-001"],
+            detail=(
+                f"Job '{job_id}' sets 'permissions' to 'write-all', granting write access "
+                "across every GITHUB_TOKEN scope within that job. Restrict the job to only "
+                "the explicit scopes it requires."
             ),
             weight=_CHECK_WEIGHTS["GHP-001"],
         )
@@ -364,7 +388,10 @@ def analyze(workflow: dict, workflow_name: str = "workflow") -> GHPResult:
         findings.append(finding_001)
 
     # --- GHP-002 (only when GHP-001 did not fire) ---
-    finding_002 = _check_ghp002(workflow, ghp001_fired=finding_001 is not None)
+    finding_002 = _check_ghp002(
+        workflow,
+        ghp001_fired=workflow.get("permissions") == "write-all",
+    )
     if finding_002:
         findings.append(finding_002)
 

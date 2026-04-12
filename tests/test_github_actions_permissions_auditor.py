@@ -91,6 +91,24 @@ def _workflow_with_step(step: dict, perms=None):
     return wf
 
 
+def _workflow_with_job_perms(job_perms, top_perms=None):
+    """Workflow containing a single job with its own permissions value."""
+    wf = {
+        "name": "test",
+        "on": "push",
+        "jobs": {
+            "job1": {
+                "runs-on": "ubuntu-latest",
+                "permissions": job_perms,
+                "steps": [],
+            }
+        },
+    }
+    if top_perms is not None:
+        wf["permissions"] = top_perms
+    return wf
+
+
 def _workflow_with_reusable_job(job: dict, perms=None):
     """Workflow containing a single reusable-workflow job."""
     wf = {
@@ -111,7 +129,7 @@ def _check_ids(result: GHPResult):
 
 
 # ===========================================================================
-# Section 1 — GHP-001: write-all at workflow level
+# Section 1 — GHP-001: write-all at workflow or job level
 # ===========================================================================
 
 def test_ghp001_fires_on_write_all():
@@ -150,6 +168,19 @@ def test_ghp001_does_not_fire_when_perms_missing():
     wf = _workflow_no_perms()
     result = analyze(wf)
     assert "GHP-001" not in _check_ids(result)
+
+
+def test_ghp001_fires_on_job_level_write_all():
+    wf = _workflow_with_job_perms("write-all", top_perms={"contents": "read"})
+    result = analyze(wf)
+    assert "GHP-001" in _check_ids(result)
+
+
+def test_ghp001_detail_mentions_job_location_for_job_level_write_all():
+    wf = _workflow_with_job_perms("write-all", top_perms={"contents": "read"})
+    result = analyze(wf)
+    finding = next(f for f in result.findings if f.check_id == "GHP-001")
+    assert "job1" in finding.detail
 
 
 def test_ghp001_suppresses_ghp002():
@@ -225,6 +256,13 @@ def test_ghp002_does_not_fire_on_write_all_because_ghp001_suppresses():
     wf = _workflow_with_perms("write-all")
     result = analyze(wf)
     assert "GHP-002" not in _check_ids(result)
+
+
+def test_ghp002_still_fires_when_job_write_all_and_top_level_missing():
+    wf = _workflow_with_job_perms("write-all")
+    result = analyze(wf)
+    assert "GHP-001" in _check_ids(result)
+    assert "GHP-002" in _check_ids(result)
 
 
 def test_ghp002_risk_score_is_25_alone():

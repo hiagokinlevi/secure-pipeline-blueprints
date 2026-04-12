@@ -7,7 +7,7 @@ Checks performed:
   - PA001 CRITICAL: Workflow trigger on pull_request_target with checkout of
                     head ref (script injection / privilege escalation)
   - PA002 HIGH:     Actions not pinned to full SHA (supply chain risk)
-  - PA003 HIGH:     'permissions: write-all' or no permissions block (over-privileged)
+  - PA003 HIGH:     Workflow/job 'permissions: write-all' or no permissions block (over-privileged)
   - PA004 HIGH:     Secrets exposed via 'run: echo ${{ secrets.* }}'
   - PA005 MEDIUM:   Third-party actions not from verified publishers
   - PA006 MEDIUM:   'continue-on-error: true' on security-relevant steps
@@ -237,6 +237,7 @@ def _check_pull_request_target(workflow: dict, result: AuditResult) -> None:
 def _check_permissions(workflow: dict, result: AuditResult) -> None:
     """PA003: Workflow-level permissions."""
     permissions = workflow.get("permissions")
+    workflow_write_all = permissions == "write-all"
 
     if permissions is None:
         result.findings.append(PipelineFinding(
@@ -250,7 +251,7 @@ def _check_permissions(workflow: dict, result: AuditResult) -> None:
                 "(e.g., 'security-events: write' for SARIF uploads)."
             ),
         ))
-    elif permissions == "write-all":
+    elif workflow_write_all:
         result.findings.append(PipelineFinding(
             rule_id="PA003",
             severity="high",
@@ -259,6 +260,30 @@ def _check_permissions(workflow: dict, result: AuditResult) -> None:
             remediation=(
                 "Replace 'write-all' with the minimum specific permissions required. "
                 "For most workflows, 'contents: read' is sufficient at the workflow level."
+            ),
+            evidence="permissions: write-all",
+        ))
+
+    if workflow_write_all:
+        return
+
+    for job_name, job in (workflow.get("jobs") or {}).items():
+        if not isinstance(job, dict):
+            continue
+        if job.get("permissions") != "write-all":
+            continue
+        result.findings.append(PipelineFinding(
+            rule_id="PA003",
+            severity="high",
+            location=f"jobs.{job_name}.permissions",
+            message=(
+                f"Job '{job_name}' uses 'permissions: write-all' — grants all write "
+                "permissions to GITHUB_TOKEN for that job"
+            ),
+            remediation=(
+                "Replace job-level 'write-all' with the minimum specific permissions required. "
+                "If the workflow already declares least-privilege defaults, override only the "
+                "single scopes this job needs."
             ),
             evidence="permissions: write-all",
         ))

@@ -257,7 +257,7 @@ class TestPA002ActionPinning(unittest.TestCase):
 
 
 class TestPA003Permissions(unittest.TestCase):
-    """PA003: Workflow-level permissions checks."""
+    """PA003: Workflow and job-level permissions checks."""
 
     def test_pa003_high_for_write_all(self):
         """permissions: write-all should trigger PA003 HIGH."""
@@ -331,6 +331,48 @@ class TestPA003Permissions(unittest.TestCase):
         """)
         result = audit_workflow_file(path)
         self.assertFalse(_findings_by_rule(result, "PA003"))
+
+    def test_pa003_high_for_job_level_write_all(self):
+        """Job-level permissions: write-all should trigger PA003 HIGH."""
+        path = _write_workflow("""
+            name: Job Write All
+            on:
+              push:
+            permissions:
+              contents: read
+            jobs:
+              release:
+                runs-on: ubuntu-latest
+                timeout-minutes: 30
+                permissions: write-all
+                steps:
+                  - uses: actions/checkout@v4
+        """)
+        result = audit_workflow_file(path)
+        pa003 = _findings_by_rule(result, "PA003")
+        self.assertTrue(pa003)
+        self.assertEqual(pa003[0].severity, "high")
+        self.assertEqual(pa003[0].location, "jobs.release.permissions")
+
+    def test_pa003_job_level_write_all_is_suppressed_when_workflow_already_write_all(self):
+        """Workflow-level write-all should avoid redundant job-level PA003 findings."""
+        path = _write_workflow("""
+            name: Redundant Write All
+            on:
+              push:
+            permissions: write-all
+            jobs:
+              release:
+                runs-on: ubuntu-latest
+                timeout-minutes: 30
+                permissions: write-all
+                steps:
+                  - uses: actions/checkout@v4
+        """)
+        result = audit_workflow_file(path)
+        pa003 = _findings_by_rule(result, "PA003")
+        self.assertEqual(len(pa003), 1)
+        self.assertEqual(pa003[0].location, "workflow.permissions")
 
 
 # ---------------------------------------------------------------------------
