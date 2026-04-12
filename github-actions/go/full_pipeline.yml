@@ -31,8 +31,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
-  pull-requests: read
 
 env:
   GO_VERSION: "1.22"
@@ -97,6 +95,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: test
+    permissions:
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout code

@@ -40,11 +40,10 @@ on:
       - "**.tf"
       - "**.tfvars"
 
-# Minimum permissions for IaC pipeline
+# Default to read-only repository access.
+# Security scan jobs override this with the SARIF upload scope they require.
 permissions:
   contents: read
-  security-events: write  # Required for SARIF upload
-  pull-requests: read
 
 env:
   # Set Terraform working directory — update if your Terraform is not in repo root
@@ -140,6 +139,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: validate
+    permissions:
+      contents: read
+      security-events: write  # Required only for SARIF upload in this job
 
     steps:
       - name: Checkout code
@@ -179,6 +181,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: validate
+    permissions:
+      contents: read
+      security-events: write  # Required only for SARIF upload in this job
 
     steps:
       - name: Checkout code

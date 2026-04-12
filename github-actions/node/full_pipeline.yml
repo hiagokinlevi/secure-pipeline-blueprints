@@ -32,11 +32,10 @@ on:
   pull_request:
     branches: [main]
 
-# Minimum permissions — least privilege
+# Default to read-only repository access.
+# Only the SARIF-producing job elevates permissions for code scanning upload.
 permissions:
   contents: read
-  security-events: write  # Required for SARIF upload to GitHub Security tab
-  pull-requests: read
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -106,6 +105,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: test  # Run SAST only if tests pass
+    permissions:
+      contents: read
+      security-events: write  # Required only for SARIF upload in this job
 
     steps:
       - name: Checkout code

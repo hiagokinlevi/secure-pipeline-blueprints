@@ -36,8 +36,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write  # Required for SARIF upload
-  packages: read          # Required if pulling base images from GHCR
 
 env:
   # Set your image name — update this for your project
@@ -81,6 +79,9 @@ jobs:
     name: Trivy Filesystem Scan
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write  # Required only for SARIF upload in this job
 
     steps:
       - name: Checkout code
@@ -119,6 +120,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: dockerfile-lint  # Only build if Dockerfile passes linting
+    permissions:
+      contents: read
+      packages: read  # Required only when the build pulls base images from GHCR
     outputs:
       image-tag: ${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
 
@@ -153,6 +157,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs: build  # Scan the built image
+    permissions:
+      contents: read
+      packages: read          # Required only when the rebuild pulls base images from GHCR
+      security-events: write  # Required only for SARIF upload in this job
 
     steps:
       - name: Checkout code

@@ -33,12 +33,10 @@ on:
   pull_request:
     branches: [main]
 
-# Enforce minimum permissions — principle of least privilege
-# Each job may override this with additional permissions if needed
+# Enforce least-privilege defaults for every job.
+# Jobs that upload SARIF override this with the single additional scope they need.
 permissions:
   contents: read
-  security-events: write  # Required for SARIF upload to GitHub Security tab
-  pull-requests: read
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -105,6 +103,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: test  # Only run SAST if tests pass — saves compute on broken builds
+    permissions:
+      contents: read
+      security-events: write  # Required only for SARIF upload in this job
 
     steps:
       - name: Checkout code

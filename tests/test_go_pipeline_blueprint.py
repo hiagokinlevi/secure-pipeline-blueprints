@@ -26,10 +26,10 @@ def test_go_github_actions_blueprint_exists():
 
 def test_go_blueprint_uses_least_privilege_permissions():
     workflow = _load_workflow()
-    assert workflow["permissions"] == {
+    assert workflow["permissions"] == {"contents": "read"}
+    assert workflow["jobs"]["sast"]["permissions"] == {
         "contents": "read",
         "security-events": "write",
-        "pull-requests": "read",
     }
 
 
