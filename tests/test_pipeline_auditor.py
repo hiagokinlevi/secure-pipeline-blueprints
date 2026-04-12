@@ -845,6 +845,36 @@ class TestAuditWorkflowDirectory(unittest.TestCase):
         self.assertEqual(len(results), 1)
         self.assertEqual(results[0].workflow_name, "My Named Workflow")
 
+    def test_symlinked_workflow_is_reported_as_unreadable(self):
+        """Directory scans should refuse to audit symlinked workflow files."""
+        external_dir_obj = tempfile.TemporaryDirectory()
+        self.addCleanup(external_dir_obj.cleanup)
+
+        external_path = Path(external_dir_obj.name) / "external.yml"
+        external_path.write_text(textwrap.dedent("""
+            name: External Workflow
+            on: push
+            permissions:
+              contents: read
+            jobs:
+              build:
+                runs-on: ubuntu-latest
+                timeout-minutes: 10
+                steps:
+                  - uses: actions/checkout@v4
+        """), encoding="utf-8")
+
+        linked_path = self.tmpdir / "linked.yml"
+        linked_path.symlink_to(external_path)
+
+        results = audit_workflow_directory(self.tmpdir)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].workflow_name, "(unreadable)")
+        self.assertTrue(
+            any("symlink" in warning.lower() for warning in results[0].warnings),
+            f"Expected symlink warning, got: {results[0].warnings}",
+        )
+
 
 # ---------------------------------------------------------------------------
 # Real blueprint audit

@@ -217,6 +217,44 @@ class TestValidateBlueprintYAML(unittest.TestCase):
         errors = validate_blueprint_yaml(path)
         self.assertTrue(len(errors) > 0, "Non-existent file should produce errors")
 
+    def test_symlinked_blueprint_returns_error(self):
+        """Symlinked blueprint paths should be rejected."""
+        external_dir_obj = tempfile.TemporaryDirectory()
+        self.addCleanup(external_dir_obj.cleanup)
+
+        external_path = Path(external_dir_obj.name) / "external.yml"
+        external_path.write_text(
+            "name: External\non: push\npermissions:\n  contents: read\njobs: {}\n",
+            encoding="utf-8",
+        )
+
+        linked_path = self.temp_dir / "github-actions" / "linked.yml"
+        linked_path.parent.mkdir(parents=True, exist_ok=True)
+        linked_path.symlink_to(external_path)
+
+        errors = validate_blueprint_yaml(linked_path)
+        self.assertTrue(
+            any("symlink" in error.lower() for error in errors),
+            f"Expected symlink safety error, got: {errors}",
+        )
+
+    def test_blueprint_outside_repo_root_returns_error(self):
+        """Repo-confined validation should reject files outside the repo root."""
+        external_dir_obj = tempfile.TemporaryDirectory()
+        self.addCleanup(external_dir_obj.cleanup)
+
+        external_path = Path(external_dir_obj.name) / "external.yml"
+        external_path.write_text(
+            "name: External\non: push\npermissions:\n  contents: read\njobs: {}\n",
+            encoding="utf-8",
+        )
+
+        errors = validate_blueprint_yaml(external_path, repo_root=self.temp_dir)
+        self.assertTrue(
+            any("outside repository root" in error.lower() for error in errors),
+            f"Expected repo-root safety error, got: {errors}",
+        )
+
 
 class TestShouldSkip(unittest.TestCase):
     """Tests for the should_skip() function."""

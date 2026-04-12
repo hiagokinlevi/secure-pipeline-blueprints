@@ -31,6 +31,11 @@ from typing import Any, Optional
 
 import yaml
 
+try:
+    from .path_safety import validate_local_file
+except ImportError:
+    from path_safety import validate_local_file
+
 
 # ---------------------------------------------------------------------------
 # Finding type
@@ -109,16 +114,33 @@ _SECRET_IN_RUN_RE = re.compile(
 # Public API
 # ---------------------------------------------------------------------------
 
-def audit_workflow_file(workflow_path: Path) -> AuditResult:
+def audit_workflow_file(
+    workflow_path: Path,
+    repo_root: Path | None = None,
+) -> AuditResult:
     """
     Audit a GitHub Actions workflow YAML file for security issues.
 
     Args:
         workflow_path: Path to the workflow YAML file.
+        repo_root: Optional root used to reject repo-escaping workflow paths.
 
     Returns:
         AuditResult with all findings.
     """
+    path_error = validate_local_file(
+        workflow_path,
+        repo_root=repo_root,
+        label="workflow file",
+    )
+    if path_error:
+        result = AuditResult(
+            file_path=workflow_path,
+            workflow_name="(unreadable)",
+        )
+        result.warnings.append(path_error)
+        return result
+
     try:
         content = workflow_path.read_text(encoding="utf-8")
         workflow = yaml.safe_load(content)
@@ -167,7 +189,7 @@ def audit_workflow_directory(
     results: list[AuditResult] = []
     for workflow_file in sorted(workflow_dir.glob(glob_pattern)):
         if workflow_file.is_file():
-            results.append(audit_workflow_file(workflow_file))
+            results.append(audit_workflow_file(workflow_file, repo_root=workflow_dir))
     return results
 
 

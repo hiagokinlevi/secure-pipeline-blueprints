@@ -24,6 +24,11 @@ import sys
 from pathlib import Path
 
 try:
+    from .path_safety import validate_local_file
+except ImportError:
+    from path_safety import validate_local_file
+
+try:
     import yaml
     YAML_AVAILABLE = True
 except ImportError:
@@ -193,17 +198,30 @@ def validate_gitlab_ci_yaml(content: dict) -> list[str]:
     return issues
 
 
-def validate_blueprint_yaml(blueprint_path: Path, verbose: bool = False) -> list[str]:
+def validate_blueprint_yaml(
+    blueprint_path: Path,
+    verbose: bool = False,
+    repo_root: Path | None = None,
+) -> list[str]:
     """
     Validate a pipeline blueprint YAML file.
 
     Args:
         blueprint_path: Path to the blueprint YAML file.
         verbose: If True, print additional context.
+        repo_root: Optional repository root used to reject repo-escaping paths.
 
     Returns:
         List of error strings. Empty means valid.
     """
+    path_error = validate_local_file(
+        blueprint_path,
+        repo_root=repo_root,
+        label="blueprint file",
+    )
+    if path_error:
+        return [path_error]
+
     errors = []
 
     if not YAML_AVAILABLE:
@@ -281,7 +299,11 @@ Examples:
             print(f"ERROR: File not found: {blueprint_path}", file=sys.stderr)
             sys.exit(1)
 
-        errors = validate_blueprint_yaml(blueprint_path, verbose=args.verbose)
+        errors = validate_blueprint_yaml(
+            blueprint_path,
+            verbose=args.verbose,
+            repo_root=REPO_ROOT,
+        )
         if errors:
             print(f"FAIL  {blueprint_path}")
             for e in errors:
@@ -309,7 +331,11 @@ Examples:
         passed = 0
 
         for bf in sorted(blueprint_files):
-            errors = validate_blueprint_yaml(bf, verbose=args.verbose)
+            errors = validate_blueprint_yaml(
+                bf,
+                verbose=args.verbose,
+                repo_root=REPO_ROOT,
+            )
             if errors:
                 print(f"FAIL  {bf.relative_to(REPO_ROOT)}")
                 for e in errors:
