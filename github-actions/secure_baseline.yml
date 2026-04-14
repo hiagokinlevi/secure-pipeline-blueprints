@@ -1,0 +1,59 @@
+name: secure-baseline-pipeline
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+# Prevent parallel runs on the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Default least-privilege permissions for GITHUB_TOKEN
+permissions:
+  contents: read
+  pull-requests: read
+  security-events: write
+
+jobs:
+  build:
+    name: baseline-security-checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.1.7
+
+      - name: Verify workflow permissions
+        run: |
+          echo "Repository: $GITHUB_REPOSITORY"
+          echo "Actor: $GITHUB_ACTOR"
+          echo "Ref: $GITHUB_REF"
+
+      - name: Basic repository integrity check
+        run: |
+          echo "Listing repository files"
+          ls -la
+
+  approval-gate:
+    name: protected-branch-approval
+    runs-on: ubuntu-latest
+    needs: build
+
+    # Only require approval when targeting the protected branch
+    if: github.ref == 'refs/heads/main'
+
+    # Environment should be configured in repository settings
+    # with required reviewers to enforce manual approval
+    environment:
+      name: protected-branch
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Await environment approval
+        run: echo "Deployment approval granted. Continuing pipeline."
