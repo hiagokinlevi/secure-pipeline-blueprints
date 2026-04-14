@@ -17,8 +17,8 @@ If you discover a security vulnerability in this project — including misconfig
 
 ### How to Report
 
-1. Open a [GitHub Security Advisory](https://github.com/hiagokinlevi/secure-pipeline-blueprints/security/advisories/new) via the repository's Security tab.
-2. Or email the maintainer directly (add contact before production use).
+1. Email **hiagokinlevi@protonmail.com**.
+2. Or open a [GitHub Security Advisory](https://github.com/hiagokinlevi/secure-pipeline-blueprints/security/advisories/new) via the repository's Security tab.
 
 ### What to Include
 

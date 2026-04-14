@@ -35,7 +35,7 @@ This Code of Conduct applies within all community spaces and when an individual 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the maintainers via the repository's Security tab or issue tracker. All complaints will be reviewed and investigated promptly and fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the maintainers at **hiagokinlevi@protonmail.com**. All complaints will be reviewed and investigated promptly and fairly.
 
 ## Attribution
 
