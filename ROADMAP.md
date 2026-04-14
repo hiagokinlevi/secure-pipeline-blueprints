@@ -52,23 +52,7 @@
 
 **Goal**: Define security requirements as code, enforce them automatically.
 
-- [ ] OPA policy: minimum security controls per stack
-- [ ] GitHub Actions: automated PR comment with security posture score
-- [ ] Scorecard integration: OpenSSF Scorecard for blueprint repositories
-- [ ] Dependabot auto-update for tool versions in blueprints
+- [ ] OPA policy: minimum security controls p
 
----
-
-## Ideas / Backlog
-
-- Ruby on Rails blueprint
-- PHP/Laravel blueprint
-- Rust blueprint
-- Mobile (iOS/Android) pipeline security controls
-- Kubernetes manifest security scanning (kube-score, trivy)
-- API contract testing integration (Dredd, Schemathesis)
-- Integration with Slack/PagerDuty for security findings
-
----
-
-Have an idea? Open an issue with the `roadmap` label.
+## Automated Completions
+- [x] GitHub Actions Secure Pipeline Baseline (cycle 1)
