@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] GitHub Actions Secure Pipeline Baseline (cycle 1)
+- [x] Pipeline Secrets Hardening Blueprint (cycle 2)
