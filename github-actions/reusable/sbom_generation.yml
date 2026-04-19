@@ -1,0 +1,50 @@
+name: Reusable SBOM Generation
+
+on:
+  workflow_call:
+    inputs:
+      artifact-name-prefix:
+        description: "Prefix used for uploaded SBOM artifact names"
+        required: false
+        type: string
+        default: "sbom"
+      source-dir:
+        description: "Directory to scan for SBOM generation"
+        required: false
+        type: string
+        default: "."
+
+jobs:
+  sbom:
+    name: Generate SBOM
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          syft "dir:${{ inputs.source-dir }}" -o cyclonedx-json=sbom.cyclonedx.json
+
+      - name: Generate SPDX SBOM
+        run: |
+          syft "dir:${{ inputs.source-dir }}" -o spdx-json=sbom.spdx.json
+
+      - name: Upload CycloneDX SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name-prefix }}-cyclonedx
+          path: sbom.cyclonedx.json
+          if-no-files-found: error
+
+      - name: Upload SPDX SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-name-prefix }}-spdx
+          path: sbom.spdx.json
+          if-no-files-found: error
