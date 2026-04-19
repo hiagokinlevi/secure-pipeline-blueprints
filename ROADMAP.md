@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Pipeline Secrets Hardening Blueprint (cycle 2)
+- [x] SBOM Generation Pipeline Step (cycle 18)
