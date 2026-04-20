@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Pipeline Misconfiguration Linter (cycle 21)
+- [x] OIDC-Based Cloud Authentication Example (cycle 22)
