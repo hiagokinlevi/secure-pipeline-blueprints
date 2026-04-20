@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Pull Request Security Gate Workflow (cycle 20)
+- [x] Pipeline Misconfiguration Linter (cycle 21)
