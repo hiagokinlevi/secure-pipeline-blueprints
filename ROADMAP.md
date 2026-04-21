@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] OIDC-Based Cloud Authentication Example (cycle 22)
+- [x] Secure Deployment Approval Workflow (cycle 23)
