@@ -1,0 +1,82 @@
+name: Action SHA Pinning Lint
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/*.yml'
+      - '.github/workflows/*.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  enforce-sha-pinning:
+    name: Enforce immutable action pinning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate workflow action references are pinned to commit SHAs
+        shell: bash
+        run: |
+          python - <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          try:
+              import yaml
+          except Exception:
+              print("::error::PyYAML is required but not available on this runner.")
+              sys.exit(2)
+
+          workflow_dir = Path('.github/workflows')
+          files = sorted([*workflow_dir.glob('*.yml'), *workflow_dir.glob('*.yaml')])
+
+          # Matches exactly 40 hex chars (git commit SHA-1 format used by GitHub action pinning)
+          sha_re = re.compile(r'^[0-9a-fA-F]{40}$')
+
+          # Built-in actions allowed to use tags (maintained by GitHub)
+          first_party_prefixes = (
+              'actions/',
+              'github/',
+          )
+
+          offenders = []
+
+          def walk(node, file_path):
+              if isinstance(node, dict):
+                  if 'uses' in node and isinstance(node['uses'], str):
+                      uses = node['uses'].strip()
+                      # Only lint repository actions in the form owner/repo@ref
+                      if '@' in uses and not uses.startswith('./') and not uses.startswith('docker://'):
+                          action, ref = uses.rsplit('@', 1)
+                          if '/' in action and not action.startswith(first_party_prefixes):
+                              if not sha_re.fullmatch(ref):
+                                  offenders.append((str(file_path), uses))
+                  for v in node.values():
+                      walk(v, file_path)
+              elif isinstance(node, list):
+                  for item in node:
+                      walk(item, file_path)
+
+          for wf in files:
+              try:
+                  data = yaml.safe_load(wf.read_text(encoding='utf-8'))
+              except Exception as exc:
+                  print(f"::error file={wf}::Failed to parse workflow YAML: {exc}")
+                  sys.exit(2)
+
+              if data is not None:
+                  walk(data, wf)
+
+          if offenders:
+              print('::error::Found third-party GitHub Actions not pinned to an immutable commit SHA:')
+              for file_path, uses in offenders:
+                  print(f"  - {file_path}: {uses}")
+              print('\nPin actions like owner/repo@<40-char commit SHA> instead of mutable refs (e.g., @v3, @main).')
+              sys.exit(1)
+
+          print('All third-party GitHub Actions are pinned to immutable commit SHAs.')
+          PY
