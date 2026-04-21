@@ -1,0 +1,46 @@
+name: Reusable Trivy Container Scan
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: "Container image reference to scan (e.g., ghcr.io/org/app:sha)"
+        required: true
+        type: string
+      severity_threshold:
+        description: "Comma-separated severities to include (e.g., CRITICAL,HIGH)"
+        required: false
+        default: "CRITICAL,HIGH"
+        type: string
+      fail_on_severity:
+        description: "Fail the workflow when findings match severity_threshold"
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  trivy-scan:
+    name: Trivy container vulnerability scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run Trivy scan (SARIF)
+        uses: aquasecurity/trivy-action@0.24.0
+        with:
+          scan-type: image
+          image-ref: ${{ inputs.image }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: ${{ inputs.severity_threshold }}
+          ignore-unfixed: true
+          exit-code: ${{ inputs.fail_on_severity && '1' || '0' }}
+
+      - name: Upload SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-container-scan
