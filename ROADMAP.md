@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Secure Deployment Approval Workflow (cycle 23)
+- [x] Reusable Trivy Container Scan Workflow (cycle 24)
