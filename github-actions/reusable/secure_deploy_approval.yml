@@ -1,0 +1,110 @@
+name: Secure Deploy Approval Workflow
+
+on:
+  workflow_call:
+    inputs:
+      artifact_name:
+        description: "Artifact name to deploy"
+        required: false
+        type: string
+        default: "build-artifact"
+      staging_environment:
+        description: "GitHub Environment name for staging"
+        required: false
+        type: string
+        default: "staging"
+      production_environment:
+        description: "GitHub Environment name for production"
+        required: false
+        type: string
+        default: "production"
+      run_staging:
+        description: "Whether to deploy to staging"
+        required: false
+        type: boolean
+        default: true
+      run_production:
+        description: "Whether to deploy to production"
+        required: false
+        type: boolean
+        default: true
+      require_main_branch_for_production:
+        description: "Allow production only from main branch"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  policy_checks:
+    name: Policy & release safety checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate production branch policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.require_main_branch_for_production }}" == "true" ]] && [[ "${{ inputs.run_production }}" == "true" ]]; then
+            if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+              echo "Production deployments are restricted to main branch. Current ref: ${GITHUB_REF}"
+              exit 1
+            fi
+          fi
+
+      - name: Ensure triggering event is trusted
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${GITHUB_EVENT_NAME}" in
+            push|workflow_dispatch|workflow_call)
+              echo "Trusted event: ${GITHUB_EVENT_NAME}"
+              ;;
+            *)
+              echo "Untrusted event for deployment workflow: ${GITHUB_EVENT_NAME}"
+              exit 1
+              ;;
+          esac
+
+  deploy_staging:
+    name: Deploy to staging (approval via protected environment)
+    if: ${{ inputs.run_staging }}
+    runs-on: ubuntu-latest
+    needs: [policy_checks]
+    environment:
+      name: ${{ inputs.staging_environment }}
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ./artifact
+
+      - name: Staging deployment placeholder
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Deploying artifact '${{ inputs.artifact_name }}' to staging environment '${{ inputs.staging_environment }}'"
+          ls -la ./artifact
+
+  deploy_production:
+    name: Deploy to production (approval via protected environment)
+    if: ${{ inputs.run_production }}
+    runs-on: ubuntu-latest
+    needs: [policy_checks, deploy_staging]
+    environment:
+      name: ${{ inputs.production_environment }}
+    steps:
+      - name: Download release artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: ./artifact
+
+      - name: Production deployment placeholder
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Deploying artifact '${{ inputs.artifact_name }}' to production environment '${{ inputs.production_environment }}'"
+          ls -la ./artifact
