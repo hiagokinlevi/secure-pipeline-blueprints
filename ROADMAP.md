@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Reusable Trivy Container Scan Workflow (cycle 24)
+- [x] GitHub Actions SHA Pinning Linter Workflow (cycle 25)
