@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] GitHub Actions SHA Pinning Linter Workflow (cycle 25)
+- [x] Add Java/Maven GitHub Actions secure blueprint (cycle 26)
