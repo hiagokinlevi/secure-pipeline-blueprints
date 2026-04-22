@@ -1,0 +1,83 @@
+name: Validate SARIF
+
+on:
+  workflow_call:
+    inputs:
+      sarif_path:
+        description: Path to SARIF file to validate
+        required: true
+        type: string
+
+jobs:
+  validate-sarif:
+    name: Validate SARIF file
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate SARIF JSON and required fields
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FILE="${{ inputs.sarif_path }}"
+
+          if [[ ! -f "$FILE" ]]; then
+            echo "::error::SARIF file not found at path: $FILE"
+            exit 1
+          fi
+
+          python - <<'PY'
+          import json
+          import sys
+
+          file_path = "${{ inputs.sarif_path }}"
+
+          try:
+              with open(file_path, "r", encoding="utf-8") as f:
+                  data = json.load(f)
+          except json.JSONDecodeError as e:
+              print(f"::error::Invalid JSON in SARIF file '{file_path}': {e}")
+              sys.exit(1)
+          except Exception as e:
+              print(f"::error::Unable to read SARIF file '{file_path}': {e}")
+              sys.exit(1)
+
+          if not isinstance(data, dict):
+              print("::error::SARIF root must be a JSON object")
+              sys.exit(1)
+
+          if data.get("version") != "2.1.0":
+              print("::error::SARIF 'version' must be '2.1.0'")
+              sys.exit(1)
+
+          runs = data.get("runs")
+          if not isinstance(runs, list) or len(runs) == 0:
+              print("::error::SARIF must contain a non-empty 'runs' array")
+              sys.exit(1)
+
+          for idx, run in enumerate(runs):
+              if not isinstance(run, dict):
+                  print(f"::error::SARIF run at index {idx} must be an object")
+                  sys.exit(1)
+
+              tool = run.get("tool")
+              if not isinstance(tool, dict):
+                  print(f"::error::SARIF run {idx} missing required object 'tool'")
+                  sys.exit(1)
+
+              driver = tool.get("driver")
+              if not isinstance(driver, dict):
+                  print(f"::error::SARIF run {idx} missing required object 'tool.driver'")
+                  sys.exit(1)
+
+              name = driver.get("name")
+              if not isinstance(name, str) or not name.strip():
+                  print(f"::error::SARIF run {idx} missing required non-empty string 'tool.driver.name'")
+                  sys.exit(1)
+
+              results = run.get("results")
+              if results is not None and not isinstance(results, list):
+                  print(f"::error::SARIF run {idx} field 'results' must be an array when present")
+                  sys.exit(1)
+
+          print("SARIF validation passed")
+          PY
