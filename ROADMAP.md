@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable SCA workflow for multi-language dependency scanning (cycle 27)
+- [x] Introduce SARIF validation guard workflow (cycle 28)
