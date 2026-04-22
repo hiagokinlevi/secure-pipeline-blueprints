@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add Java/Maven GitHub Actions secure blueprint (cycle 26)
+- [x] Add reusable SCA workflow for multi-language dependency scanning (cycle 27)
