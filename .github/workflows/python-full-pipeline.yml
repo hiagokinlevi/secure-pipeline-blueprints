@@ -1,0 +1,31 @@
+name: Python Full Security Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  build-test-security:
+    uses: ./github-actions/python/full_pipeline.yml
+
+  validate-semgrep-sarif:
+    name: Validate Semgrep SARIF
+    needs: build-test-security
+    uses: ./github-actions/reusable/validate_sarif.yml
+    with:
+      sarif_path: semgrep.sarif
+
+  upload-semgrep-sarif:
+    name: Upload Semgrep SARIF
+    needs: validate-semgrep-sarif
+    runs-on: ubuntu-latest
+    steps:
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
