@@ -1,0 +1,118 @@
+name: Reusable SCA
+
+on:
+  workflow_call:
+    inputs:
+      language:
+        description: "Target language ecosystem (python|node|go)"
+        required: true
+        type: string
+      working-directory:
+        description: "Directory to run scans from"
+        required: false
+        default: "."
+        type: string
+      severity-threshold:
+        description: "Severity threshold for npm audit (--audit-level)"
+        required: false
+        default: "moderate"
+        type: string
+    outputs:
+      status:
+        description: "SCA run status (pass|fail)"
+        value: ${{ jobs.sca.outputs.status }}
+      summary:
+        description: "Human-readable SCA summary"
+        value: ${{ jobs.sca.outputs.summary }}
+
+jobs:
+  sca:
+    name: SCA (${{ inputs.language }})
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    outputs:
+      status: ${{ steps.finalize.outputs.status }}
+      summary: ${{ steps.finalize.outputs.summary }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        if: ${{ inputs.language == 'python' }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Setup Node.js
+        if: ${{ inputs.language == 'node' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Go
+        if: ${{ inputs.language == 'go' }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Run pip-audit
+        id: python_scan
+        if: ${{ inputs.language == 'python' }}
+        continue-on-error: true
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          pip-audit
+
+      - name: Run npm audit
+        id: node_scan
+        if: ${{ inputs.language == 'node' }}
+        continue-on-error: true
+        run: |
+          npm audit --audit-level=${{ inputs.severity-threshold }}
+
+      - name: Run govulncheck
+        id: go_scan
+        if: ${{ inputs.language == 'go' }}
+        continue-on-error: true
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+      - name: Reject unsupported language
+        id: unsupported
+        if: ${{ inputs.language != 'python' && inputs.language != 'node' && inputs.language != 'go' }}
+        continue-on-error: true
+        run: |
+          echo "Unsupported language: ${{ inputs.language }}"
+          exit 1
+
+      - name: Finalize result
+        id: finalize
+        run: |
+          status="pass"
+          summary="SCA passed for language=${{ inputs.language }}"
+
+          if [[ "${{ steps.python_scan.outcome }}" == "failure" || "${{ steps.node_scan.outcome }}" == "failure" || "${{ steps.go_scan.outcome }}" == "failure" || "${{ steps.unsupported.outcome }}" == "failure" ]]; then
+            status="fail"
+            summary="SCA found issues or failed for language=${{ inputs.language }}"
+          fi
+
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "summary=$summary" >> "$GITHUB_OUTPUT"
+
+      - name: Job summary
+        run: |
+          {
+            echo "## Reusable SCA Result"
+            echo "- Language: \`${{ inputs.language }}\`"
+            echo "- Status: **${{ steps.finalize.outputs.status }}**"
+            echo "- Summary: ${{ steps.finalize.outputs.summary }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Enforce failure on findings
+        if: ${{ steps.finalize.outputs.status == 'fail' }}
+        run: exit 1
