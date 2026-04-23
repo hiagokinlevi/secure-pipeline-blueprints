@@ -1,0 +1,36 @@
+id: github-actions-go-full-pipeline
+name: GitHub Actions Go Full Pipeline
+version: 1.0.0
+platform: github-actions
+stack: go
+blueprint_path: github-actions/go/full_pipeline.yml
+owner: secure-pipeline-blueprints
+controls:
+  - sast
+  - sca
+  - secrets
+  - code-quality
+  - coverage
+  - supply-chain
+tools:
+  sast:
+    - semgrep
+  sca:
+    - govulncheck
+  secrets:
+    - gitleaks
+  code_quality:
+    - go-vet
+  testing:
+    - go-test
+    - race-detector
+  coverage:
+    - go-test-cover
+  supply_chain:
+    - dependency-review
+triggers:
+  - pull_request
+  - push
+artifacts:
+  - sarif
+  - coverage-report
