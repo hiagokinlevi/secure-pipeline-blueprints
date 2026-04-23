@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add Go blueprint metadata validation test fixture (cycle 30)
+- [x] Add workflow-permission minimization checker for GitHub Actions blueprints (cycle 31)
