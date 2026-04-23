@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Introduce SARIF validation guard workflow (cycle 28)
+- [x] Add Terraform plan security gate workflow (cycle 29)
