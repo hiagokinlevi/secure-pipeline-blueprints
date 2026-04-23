@@ -1,0 +1,89 @@
+name: Terraform Plan Security Gate
+
+on:
+  workflow_call:
+    inputs:
+      working_directory:
+        description: Terraform root directory
+        required: false
+        type: string
+        default: .
+      terraform_version:
+        description: Terraform CLI version
+        required: false
+        type: string
+        default: 1.7.5
+      severity_threshold:
+        description: Severity gate for Checkov/tfsec (LOW, MEDIUM, HIGH, CRITICAL)
+        required: false
+        type: string
+        default: HIGH
+
+permissions:
+  contents: read
+
+jobs:
+  terraform-plan-gate:
+    name: Terraform Plan + Security Gate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working_directory }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ inputs.terraform_version }}
+
+      - name: Terraform Init (no backend)
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan -input=false -lock=false
+
+      - name: Terraform Show plan as JSON
+        run: terraform show -json tfplan > tfplan.json
+
+      - name: Normalize severity threshold
+        id: sev
+        run: |
+          set -euo pipefail
+          sev="${{ inputs.severity_threshold }}"
+          sev_upper="$(echo "$sev" | tr '[:lower:]' '[:upper:]')"
+          case "$sev_upper" in
+            LOW|MEDIUM|HIGH|CRITICAL) ;;
+            *)
+              echo "Invalid severity_threshold: $sev"
+              echo "Valid values: LOW, MEDIUM, HIGH, CRITICAL"
+              exit 1
+              ;;
+          esac
+          echo "value=$sev_upper" >> "$GITHUB_OUTPUT"
+
+      - name: Run Checkov (config + plan)
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: ${{ inputs.working_directory }}
+          framework: terraform,terraform_plan
+          file: ${{ inputs.working_directory }}/tfplan.json
+          quiet: true
+          soft_fail: false
+          output_format: cli
+          download_external_modules: true
+          skip_check: CKV2_GHA_1
+          hard_fail_on: ${{ steps.sev.outputs.value }}
+
+      - name: Run tfsec (gate by severity)
+        uses: aquasecurity/tfsec-action@v1.0.3
+        with:
+          working_directory: ${{ inputs.working_directory }}
+          soft_fail: false
+          minimum_severity: ${{ steps.sev.outputs.value }}
