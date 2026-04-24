@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add workflow-permission minimization checker for GitHub Actions blueprints (cycle 31)
+- [x] Add CodeQL SARIF upload workflow for GitLab CI outputs (cycle 32)
