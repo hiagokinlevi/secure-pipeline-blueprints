@@ -1,0 +1,34 @@
+stages:
+  - security
+
+.gitleaks-defaults:
+  image: zricethezav/gitleaks:latest
+  stage: security
+  variables:
+    GITLEAKS_CONFIG: ".gitleaks.toml"
+    GITLEAKS_REPORT: "gitleaks-report.json"
+  script:
+    - |
+      if [ ! -f "$GITLEAKS_CONFIG" ]; then
+        echo "ERROR: Gitleaks config not found at $GITLEAKS_CONFIG"
+        exit 2
+      fi
+    - |
+      gitleaks detect \
+        --source . \
+        --config "$GITLEAKS_CONFIG" \
+        --report-format json \
+        --report-path "$GITLEAKS_REPORT" \
+        --redact \
+        --exit-code 1
+  artifacts:
+    when: always
+    expire_in: 7 days
+    paths:
+      - "$GITLEAKS_REPORT"
+
+# Reusable job to include from consumer pipelines.
+# Fails the job when secrets are detected (exit code 1).
+gitleaks_scan:
+  extends: .gitleaks-defaults
+  allow_failure: false
