@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add CodeQL SARIF upload workflow for GitLab CI outputs (cycle 32)
+- [x] Add GitLab CI reusable Gitleaks include template (cycle 33)
