@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add GitLab CI reusable Gitleaks include template (cycle 33)
+- [x] Add branch-aware severity gate script for reusable SCA workflow (cycle 34)
