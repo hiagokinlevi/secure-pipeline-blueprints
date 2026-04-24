@@ -1,0 +1,36 @@
+name: Upload GitLab SARIF to GitHub Security
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  upload-gitlab-sarif:
+    name: Upload GitLab CI SARIF artifacts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify SARIF files exist
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(artifacts/security/*.sarif)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No SARIF files found at artifacts/security/*.sarif"
+            echo "Ensure GitLab CI exports SARIF reports into this path before running this workflow."
+            exit 1
+          fi
+          echo "Found ${#files[@]} SARIF file(s):"
+          printf ' - %s\n' "${files[@]}"
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: artifacts/security
