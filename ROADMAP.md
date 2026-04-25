@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add GitHub Actions workflow to enforce hard-fail on high/critical findings in Semgrep SARIF (cycle 36)
+- [x] Add reusable workflow to enforce runner label allowlist (cycle 37)
