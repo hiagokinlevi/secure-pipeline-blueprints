@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to enforce runner label allowlist (cycle 37)
+- [x] Add GitHub Actions OIDC hardening reusable workflow (cycle 38)
