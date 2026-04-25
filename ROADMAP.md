@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add GitHub Actions workflow-call contract test for reusable workflows (cycle 35)
+- [x] Add GitHub Actions workflow to enforce hard-fail on high/critical findings in Semgrep SARIF (cycle 36)
