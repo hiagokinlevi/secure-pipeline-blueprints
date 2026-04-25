@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add branch-aware severity gate script for reusable SCA workflow (cycle 34)
+- [x] Add GitHub Actions workflow-call contract test for reusable workflows (cycle 35)
