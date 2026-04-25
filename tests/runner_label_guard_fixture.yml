@@ -1,0 +1,17 @@
+name: runner-label-guard-fixture
+
+on:
+  workflow_dispatch:
+
+jobs:
+  should_pass:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ok"
+
+  should_fail:
+    runs-on:
+      - self-hosted
+      - linux
+    steps:
+      - run: echo "not ok"
