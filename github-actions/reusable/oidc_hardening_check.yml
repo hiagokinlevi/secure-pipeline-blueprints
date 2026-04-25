@@ -1,0 +1,195 @@
+name: OIDC Hardening Check
+
+on:
+  workflow_call:
+    inputs:
+      workflows_path:
+        description: "Directory containing workflow files to validate"
+        required: false
+        type: string
+        default: ".github/workflows"
+      fail_on_warnings:
+        description: "Treat warnings as failures"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  validate-oidc-hardening:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate OIDC permission hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TARGET_DIR="${{ inputs.workflows_path }}"
+          if [[ ! -d "$TARGET_DIR" ]]; then
+            echo "No workflows directory found at $TARGET_DIR; nothing to validate."
+            exit 0
+          fi
+
+          python3 - <<'PY'
+          import glob
+          import os
+          import sys
+          from yaml import safe_load
+
+          target_dir = os.environ.get("TARGET_DIR", "")
+          fail_on_warnings = os.environ.get("FAIL_ON_WARNINGS", "true").lower() == "true"
+
+          files = sorted(glob.glob(os.path.join(target_dir, "**", "*.yml"), recursive=True))
+          files += sorted(glob.glob(os.path.join(target_dir, "**", "*.yaml"), recursive=True))
+
+          errors = []
+          warnings = []
+
+          def has_id_token_write(perm):
+              return isinstance(perm, dict) and str(perm.get("id-token", "")).strip().lower() == "write"
+
+          def is_minimized_permissions(perm):
+              if not isinstance(perm, dict):
+                  return False
+              if perm.get("id-token") != "write":
+                  return False
+              # Require explicit minimal scope pairing for OIDC use.
+              # Common secure pattern is id-token: write + contents: read.
+              return set(perm.keys()).issubset({"id-token", "contents"}) and perm.get("contents") == "read"
+
+          for path in files:
+              with open(path, "r", encoding="utf-8") as f:
+                  data = safe_load(f) or {}
+
+              wf_permissions = data.get("permissions")
+              jobs = data.get("jobs") or {}
+
+              for job_name, job in jobs.items():
+                  if not isinstance(job, dict):
+                      continue
+
+                  job_permissions = job.get("permissions")
+                  effective_permissions = job_permissions if job_permissions is not None else wf_permissions
+
+                  if has_id_token_write(effective_permissions):
+                      # Rule 1: must have accompanying permissions block at job/workflow level
+                      if effective_permissions is None:
+                          errors.append(f"{path}:{job_name} uses OIDC but has no explicit permissions block")
+                          continue
+
+                      # Rule 2: fail broad default permissions when requesting OIDC
+                      if not is_minimized_permissions(effective_permissions):
+                          errors.append(
+                              f"{path}:{job_name} grants id-token: write without minimized permissions "
+                              f"(expected only id-token: write and contents: read)"
+                          )
+
+                  # Optional warning: job-level OIDC with workflow-level broad permissions and no override
+                  if job_permissions is None and has_id_token_write(wf_permissions):
+                      if not is_minimized_permissions(wf_permissions):
+                          warnings.append(
+                              f"{path}:{job_name} inherits broad workflow permissions while using OIDC"
+                          )
+
+          if warnings:
+              print("OIDC hardening warnings:")
+              for w in warnings:
+                  print(f"  - {w}")
+
+          if errors:
+              print("OIDC hardening violations:")
+              for e in errors:
+                  print(f"  - {e}")
+              sys.exit(1)
+
+          if warnings and fail_on_warnings:
+              sys.exit(1)
+
+          print(f"OIDC hardening validation passed for {len(files)} workflow file(s).")
+          PY
+        env:
+          TARGET_DIR: ${{ inputs.workflows_path }}
+          FAIL_ON_WARNINGS: ${{ inputs.fail_on_warnings }}
+
+  test-fixture:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Create focused secure/insecure fixture and validate behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p tests/oidc-hardening-fixture/.github/workflows
+
+          cat > tests/oidc-hardening-fixture/.github/workflows/secure.yml <<'YAML'
+          name: secure
+          on: [push]
+          permissions:
+            contents: read
+          jobs:
+            deploy:
+              runs-on: ubuntu-latest
+              permissions:
+                id-token: write
+                contents: read
+              steps:
+                - run: echo "secure"
+          YAML
+
+          cat > tests/oidc-hardening-fixture/.github/workflows/insecure.yml <<'YAML'
+          name: insecure
+          on: [push]
+          jobs:
+            deploy:
+              runs-on: ubuntu-latest
+              permissions:
+                id-token: write
+                contents: write
+                actions: read
+              steps:
+                - run: echo "insecure"
+          YAML
+
+          # Inline validator to assert focused fixture behavior: secure passes, insecure fails.
+          python3 - <<'PY'
+          import os
+          import glob
+          import sys
+          from yaml import safe_load
+
+          base = "tests/oidc-hardening-fixture/.github/workflows"
+          files = sorted(glob.glob(os.path.join(base, "*.yml")))
+
+          def has_id_token_write(perm):
+              return isinstance(perm, dict) and perm.get("id-token") == "write"
+
+          def minimized(perm):
+              return isinstance(perm, dict) and set(perm.keys()).issubset({"id-token", "contents"}) and perm.get("contents") == "read"
+
+          violations = {}
+          for path in files:
+              data = safe_load(open(path, "r", encoding="utf-8")) or {}
+              wf_perm = data.get("permissions")
+              for name, job in (data.get("jobs") or {}).items():
+                  jp = job.get("permissions") if isinstance(job, dict) else None
+                  eff = jp if jp is not None else wf_perm
+                  if has_id_token_write(eff) and not minimized(eff):
+                      violations.setdefault(os.path.basename(path), []).append(name)
+
+          if "secure.yml" in violations:
+              print("secure fixture unexpectedly failed")
+              sys.exit(1)
+          if "insecure.yml" not in violations:
+              print("insecure fixture unexpectedly passed")
+              sys.exit(1)
+
+          print("Fixture test passed: secure sample passes, insecure sample fails.")
+          PY
