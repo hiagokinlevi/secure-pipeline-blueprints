@@ -1,0 +1,114 @@
+name: semgrep-severity-gate
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  # Comma-separated severities that should fail the job.
+  # Tune as needed, e.g. "CRITICAL,HIGH,MEDIUM".
+  SEMGREP_FAIL_SEVERITIES: CRITICAL,HIGH
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep-gate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep (SARIF)
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: auto
+          generateSarif: "1"
+          sarif: semgrep.sarif
+        env:
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+      - name: Upload SARIF to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Enforce severity gate from SARIF
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from collections import Counter
+
+          sarif_path = "semgrep.sarif"
+          fail_set = {
+              s.strip().upper()
+              for s in os.getenv("SEMGREP_FAIL_SEVERITIES", "CRITICAL,HIGH").split(",")
+              if s.strip()
+          }
+
+          try:
+              with open(sarif_path, "r", encoding="utf-8") as f:
+                  sarif = json.load(f)
+          except FileNotFoundError:
+              print(f"::error::SARIF file not found: {sarif_path}")
+              sys.exit(2)
+
+          results = []
+          for run in sarif.get("runs", []):
+              results.extend(run.get("results", []))
+
+          counts = Counter()
+          failing = []
+
+          for r in results:
+              props = r.get("properties", {}) or {}
+              sev = (
+                  props.get("severity")
+                  or props.get("issue_severity")
+                  or props.get("security-severity")
+                  or "UNKNOWN"
+              )
+              sev = str(sev).upper()
+              counts[sev] += 1
+              if sev in fail_set:
+                  rule_id = r.get("ruleId", "unknown-rule")
+                  msg = ((r.get("message") or {}).get("text") or "").strip()
+                  loc = ""
+                  if r.get("locations"):
+                      p = (((r["locations"][0] or {}).get("physicalLocation") or {}).get("artifactLocation") or {}).get("uri")
+                      if p:
+                          loc = f" ({p})"
+                  failing.append(f"{sev}: {rule_id}{loc} - {msg}")
+
+          summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "no findings"
+          print(f"Semgrep SARIF findings: {summary}")
+
+          # Annotate non-failing findings for visibility without blocking.
+          for sev, c in sorted(counts.items()):
+              if sev not in fail_set and sev != "UNKNOWN":
+                  print(f"::notice::Semgrep {sev} findings: {c} (non-blocking)")
+
+          if failing:
+              print("::group::Blocking Semgrep findings")
+              for item in failing[:50]:
+                  print(item)
+              if len(failing) > 50:
+                  print(f"... and {len(failing) - 50} more")
+              print("::endgroup::")
+              print(
+                  f"::error::Semgrep severity gate failed. Blocking severities: {','.join(sorted(fail_set))}. "
+                  f"Found {len(failing)} blocking findings."
+              )
+              sys.exit(1)
+
+          print("Semgrep severity gate passed.")
+          PY
