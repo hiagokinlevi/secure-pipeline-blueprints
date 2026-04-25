@@ -1,0 +1,99 @@
+name: Runner Label Guard
+
+on:
+  workflow_call:
+    inputs:
+      workflows_glob:
+        description: "Glob for workflow files to scan"
+        required: false
+        type: string
+        default: ".github/workflows/*.yml"
+      allowed_labels:
+        description: "Comma-separated allowed runner labels"
+        required: false
+        type: string
+        default: "ubuntu-latest,ubuntu-22.04,windows-latest,windows-2022,macos-latest,macos-14"
+
+jobs:
+  enforce-runner-label-allowlist:
+    name: Enforce runner label allowlist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate workflow runner labels
+        shell: bash
+        env:
+          WORKFLOWS_GLOB: ${{ inputs.workflows_glob }}
+          ALLOWED_LABELS: ${{ inputs.allowed_labels }}
+        run: |
+          python - <<'PY'
+          import glob
+          import os
+          import sys
+
+          import yaml
+
+          allowed = {
+              x.strip()
+              for x in os.environ.get("ALLOWED_LABELS", "").split(",")
+              if x.strip()
+          }
+          pattern = os.environ.get("WORKFLOWS_GLOB", ".github/workflows/*.yml")
+          files = sorted(set(glob.glob(pattern, recursive=True)))
+
+          if not files:
+              print(f"::warning::No workflow files matched pattern: {pattern}")
+              sys.exit(0)
+
+          violations = []
+
+          def check_label(path, job_name, label):
+              if isinstance(label, str):
+                  if label not in allowed:
+                      violations.append(
+                          f"{path} job '{job_name}' uses disallowed runs-on label '{label}'"
+                      )
+              elif isinstance(label, list):
+                  for item in label:
+                      if isinstance(item, str):
+                          if item not in allowed:
+                              violations.append(
+                                  f"{path} job '{job_name}' uses disallowed runs-on label '{item}'"
+                              )
+                      else:
+                          violations.append(
+                              f"{path} job '{job_name}' has non-string runs-on list item '{item}'"
+                          )
+              else:
+                  violations.append(
+                      f"{path} job '{job_name}' has unsupported runs-on value type '{type(label).__name__}'"
+                  )
+
+          for path in files:
+              with open(path, "r", encoding="utf-8") as f:
+                  data = yaml.safe_load(f) or {}
+
+              jobs = data.get("jobs")
+              if not isinstance(jobs, dict):
+                  continue
+
+              for job_name, job_cfg in jobs.items():
+                  if not isinstance(job_cfg, dict):
+                      continue
+                  if "uses" in job_cfg:
+                      # Reusable workflow call; runner is defined in called workflow.
+                      continue
+                  if "runs-on" not in job_cfg:
+                      continue
+                  check_label(path, job_name, job_cfg.get("runs-on"))
+
+          if violations:
+              print("::error::Runner label allowlist violations found:")
+              for v in violations:
+                  print(f" - {v}")
+              sys.exit(1)
+
+          print(f"Runner label guard passed for {len(files)} workflow file(s).")
+          PY
