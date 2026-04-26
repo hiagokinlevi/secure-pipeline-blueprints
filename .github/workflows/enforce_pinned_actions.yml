@@ -1,0 +1,59 @@
+name: enforce-pinned-actions
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  enforce:
+    name: Enforce pinned action SHAs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate uses: references are pinned to full commit SHAs
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          files=$(find github-actions .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) 2>/dev/null || true)
+          if [[ -z "${files}" ]]; then
+            echo "No workflow files found under github-actions/** or .github/workflows/**"
+            exit 0
+          fi
+
+          violations=()
+          # Match lines like: uses: owner/repo@ref
+          # Exclude local actions (./) and docker images (docker://)
+          while IFS= read -r line; do
+            file="${line%%:*}"
+            rest="${line#*:}"
+            lineno="${rest%%:*}"
+            text="${rest#*:}"
+
+            # Extract uses value (support optional quotes)
+            value=$(printf '%s' "$text" | sed -E 's/^.*uses:[[:space:]]*["'\'' ]*([^"'\'' #]+).*/\1/')
+
+            # Skip local and docker references
+            if [[ "$value" == ./* ]] || [[ "$value" == docker://* ]]; then
+              continue
+            fi
+
+            # External action must be owner/repo@40-hex-sha
+            if [[ ! "$value" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[0-9a-fA-F]{40}$ ]]; then
+              violations+=("${file}:${lineno}: uses: ${value}")
+            fi
+          done < <(grep -RInE '^[[:space:]]*uses:[[:space:]]*' $files || true)
+
+          if (( ${#violations[@]} > 0 )); then
+            echo "Found unpinned or non-compliant GitHub Action references:"
+            printf ' - %s\n' "${violations[@]}"
+            echo
+            echo "Expected format for external actions: owner/repo@<40-char-commit-sha>"
+            exit 1
+          fi
+
+          echo "All checked uses: references are pinned to full commit SHAs."
