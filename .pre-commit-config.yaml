@@ -1,0 +1,23 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-toml
+        name: Validate gitleaks TOML
+        files: ^gitleaks\.toml$
+      - id: check-yaml
+        name: Validate Semgrep YAML
+        files: (^|.*/)(semgrep(\.ya?ml|/.*\.ya?ml)|.*semgrep.*\.ya?ml)$
+
+  - repo: local
+    hooks:
+      - id: gitleaks-regex-sanity
+        name: Gitleaks regex sanity checks
+        language: pygrep
+        entry: '(?i)(password|apikey|api[_-]?key|secret|token|aws[_-]?secret|private[_-]?key)'
+        files: ^gitleaks\.toml$
+      - id: semgrep-rule-sanity
+        name: Semgrep rule sanity checks
+        language: pygrep
+        entry: '(?m)^\s*id:\s*[^#\n]+'
+        files: (^|.*/)(semgrep(\.ya?ml|/.*\.ya?ml)|.*semgrep.*\.ya?ml)$
