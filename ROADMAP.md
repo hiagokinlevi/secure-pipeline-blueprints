@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add GitHub Actions OIDC hardening reusable workflow (cycle 38)
+- [x] Add local pre-commit hook to run Gitleaks and Semgrep config lint before CI (cycle 39)
