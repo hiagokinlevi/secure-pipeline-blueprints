@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add local pre-commit hook to run Gitleaks and Semgrep config lint before CI (cycle 39)
+- [x] Add reusable workflow to pin GitHub Actions to commit SHAs (cycle 40)
