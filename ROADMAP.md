@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to pin GitHub Actions to commit SHAs (cycle 40)
+- [x] Add reusable workflow to fail on unpinned third-party GitHub Actions (cycle 41)
