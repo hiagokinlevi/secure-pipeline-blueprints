@@ -1,0 +1,93 @@
+name: Reusable Permissions Gate
+
+on:
+  workflow_call:
+    inputs:
+      target_glob:
+        description: "Glob of workflow files to validate"
+        required: false
+        type: string
+        default: "github-actions/**/*.yml"
+      allowed_write_scopes:
+        description: "Comma-separated write scopes allowed (e.g., contents,packages)"
+        required: false
+        type: string
+        default: "security-events,id-token"
+
+jobs:
+  permissions-gate:
+    name: Validate workflow permissions policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate permissions blocks
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import glob
+          import os
+          import sys
+          import yaml
+
+          target_glob = os.environ.get("TARGET_GLOB", "github-actions/**/*.yml")
+          allow_csv = os.environ.get("ALLOWED_WRITE_SCOPES", "security-events,id-token")
+          allowed_write = {s.strip() for s in allow_csv.split(",") if s.strip()}
+
+          files = sorted(glob.glob(target_glob, recursive=True))
+          if not files:
+              print(f"No files matched: {target_glob}")
+              sys.exit(0)
+
+          violations = []
+
+          def check_permissions(obj, location, file_path):
+              if obj is None:
+                  violations.append((file_path, location, "missing permissions block"))
+                  return
+              if isinstance(obj, str):
+                  if obj == "write-all":
+                      violations.append((file_path, location, "permissions set to write-all"))
+                  return
+              if not isinstance(obj, dict):
+                  violations.append((file_path, location, f"invalid permissions type: {type(obj).__name__}"))
+                  return
+
+              for scope, level in obj.items():
+                  if str(level) == "write" and scope not in allowed_write:
+                      violations.append((file_path, location, f"disallowed write scope '{scope}'"))
+
+          for path in files:
+              with open(path, "r", encoding="utf-8") as f:
+                  data = yaml.safe_load(f) or {}
+
+              if not isinstance(data, dict):
+                  violations.append((path, "workflow", "root document must be a mapping"))
+                  continue
+
+              check_permissions(data.get("permissions"), "top-level", path)
+
+              jobs = data.get("jobs")
+              if isinstance(jobs, dict):
+                  for job_name, job_def in jobs.items():
+                      if not isinstance(job_def, dict):
+                          violations.append((path, f"jobs.{job_name}", "job definition must be a mapping"))
+                          continue
+                      check_permissions(job_def.get("permissions"), f"jobs.{job_name}", path)
+
+          if violations:
+              print("Permissions policy violations:")
+              for file_path, location, msg in violations:
+                  print(f"- {file_path} [{location}]: {msg}")
+              print(f"Total violations: {len(violations)}")
+              sys.exit(1)
+
+          print(f"Permissions policy passed for {len(files)} file(s).")
+          PY
+        env:
+          TARGET_GLOB: ${{ inputs.target_glob }}
+          ALLOWED_WRITE_SCOPES: ${{ inputs.allowed_write_scopes }}
