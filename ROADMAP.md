@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add Dependabot config to auto-update GitHub Actions and Python tooling weekly (cycle 42)
+- [x] Add reusable workflow to enforce secure `permissions` block in GitHub Actions workflows (cycle 43)
