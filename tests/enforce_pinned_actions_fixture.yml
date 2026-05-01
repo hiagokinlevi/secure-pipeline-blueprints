@@ -1,0 +1,17 @@
+name: Fixture for pinned-action enforcement
+
+# This fixture intentionally contains both passing and failing examples
+# to validate scanner behavior.
+
+jobs:
+  passing_examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ./github-actions/reusable/dependency_review.yml
+      - uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608
+
+  failing_examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@v5
+      - uses: docker://alpine:3.20
