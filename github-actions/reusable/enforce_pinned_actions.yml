@@ -1,0 +1,73 @@
+name: Enforce Pinned Third-Party Actions
+
+on:
+  workflow_call:
+    inputs:
+      path:
+        description: "Directory to scan for workflow YAML files"
+        required: false
+        default: ".github/workflows"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  enforce-pinned-actions:
+    name: Enforce full-SHA pinning for third-party actions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Scan workflow files for unpinned third-party actions
+        shell: bash
+        run: |
+          python - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path("${{ inputs.path }}")
+          if not root.exists():
+              print(f"No workflow directory found at: {root}. Nothing to scan.")
+              sys.exit(0)
+
+          uses_pattern = re.compile(r"^\s*uses:\s*['\"]?([^'\"\s]+)['\"]?\s*$")
+          full_sha_pattern = re.compile(r"^[0-9a-f]{40}$")
+
+          violations = []
+
+          for wf in sorted(root.rglob("*.yml")) + sorted(root.rglob("*.yaml")):
+              for lineno, line in enumerate(wf.read_text(encoding="utf-8").splitlines(), start=1):
+                  match = uses_pattern.match(line)
+                  if not match:
+                      continue
+
+                  ref = match.group(1)
+
+                  # Allow local reusable actions/workflows.
+                  if ref.startswith("./"):
+                      continue
+
+                  # Docker actions are out of scope for commit pinning.
+                  if ref.startswith("docker://"):
+                      continue
+
+                  # Expected remote format: owner/repo@ref
+                  if "@" not in ref:
+                      violations.append((wf, lineno, ref, "missing @ref"))
+                      continue
+
+                  _, version = ref.rsplit("@", 1)
+                  if not full_sha_pattern.fullmatch(version):
+                      violations.append((wf, lineno, ref, "ref is not a full 40-char commit SHA"))
+
+          if violations:
+              print("::error::Detected unpinned third-party GitHub Actions (must use full commit SHA)")
+              for wf, lineno, ref, reason in violations:
+                  print(f"{wf}:{lineno}: {ref} -> {reason}")
+              sys.exit(1)
+
+          print("All third-party GitHub Actions are pinned to full commit SHAs.")
+          PY
