@@ -1,0 +1,126 @@
+name: Enforce Workflow Job Timeouts
+
+on:
+  workflow_call:
+    inputs:
+      max-timeout-minutes:
+        description: Maximum allowed timeout-minutes for any job
+        required: false
+        type: number
+        default: 30
+      workflows-glob:
+        description: Glob for workflow files to scan
+        required: false
+        type: string
+        default: ".github/workflows/*.yml"
+
+jobs:
+  enforce-timeouts:
+    name: Enforce timeout-minutes policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate workflow job timeouts
+        shell: bash
+        env:
+          MAX_TIMEOUT: ${{ inputs.max-timeout-minutes }}
+          WORKFLOWS_GLOB: ${{ inputs.workflows-glob }}
+        run: |
+          python - <<'PY'
+          import glob
+          import os
+          import re
+          import sys
+
+          try:
+              import yaml
+          except Exception:
+              print("PyYAML is required but not available.")
+              sys.exit(2)
+
+          max_timeout = int(float(os.environ.get("MAX_TIMEOUT", "30")))
+          workflows_glob = os.environ.get("WORKFLOWS_GLOB", ".github/workflows/*.yml")
+
+          files = sorted(set(glob.glob(workflows_glob)))
+          if not files:
+              print(f"No workflow files matched glob: {workflows_glob}")
+              sys.exit(0)
+
+          offenders = []
+
+          for wf in files:
+              try:
+                  with open(wf, "r", encoding="utf-8") as f:
+                      data = yaml.safe_load(f) or {}
+              except Exception as e:
+                  offenders.append((wf, "<workflow>", f"unable to parse YAML: {e}"))
+                  continue
+
+              jobs = data.get("jobs")
+              if not isinstance(jobs, dict):
+                  continue
+
+              for job_name, job_def in jobs.items():
+                  if not isinstance(job_def, dict):
+                      offenders.append((wf, f"jobs.{job_name}", "job definition is not a mapping"))
+                      continue
+
+                  timeout = job_def.get("timeout-minutes")
+                  if timeout is None:
+                      offenders.append((wf, f"jobs.{job_name}", "missing timeout-minutes"))
+                      continue
+
+                  if isinstance(timeout, str):
+                      if re.search(r"\$\{\{", timeout):
+                          offenders.append((wf, f"jobs.{job_name}", "timeout-minutes must be a numeric literal (expressions are not allowed for policy check)"))
+                          continue
+                      try:
+                          timeout = float(timeout)
+                      except ValueError:
+                          offenders.append((wf, f"jobs.{job_name}", f"timeout-minutes is not numeric: {timeout!r}"))
+                          continue
+
+                  if not isinstance(timeout, (int, float)):
+                      offenders.append((wf, f"jobs.{job_name}", f"timeout-minutes has invalid type: {type(timeout).__name__}"))
+                      continue
+
+                  if timeout > max_timeout:
+                      offenders.append((wf, f"jobs.{job_name}", f"timeout-minutes {timeout:g} exceeds max {max_timeout}"))
+
+          summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+
+          if offenders:
+              print("::error::timeout-minutes policy violations found")
+              lines = [
+                  "## ❌ timeout-minutes policy violations",
+                  "",
+                  f"Maximum allowed timeout-minutes: **{max_timeout}**",
+                  "",
+                  "| Workflow | Job Path | Violation |",
+                  "|---|---|---|",
+              ]
+              for wf, path, reason in offenders:
+                  lines.append(f"| `{wf}` | `{path}` | {reason} |")
+
+              summary = "\n".join(lines) + "\n"
+              if summary_path:
+                  with open(summary_path, "a", encoding="utf-8") as s:
+                      s.write(summary)
+
+              for wf, path, reason in offenders:
+                  print(f" - {wf} :: {path} :: {reason}")
+              sys.exit(1)
+
+          ok = [
+              "## ✅ timeout-minutes policy passed",
+              "",
+              f"Checked **{len(files)}** workflow file(s) with max timeout **{max_timeout}** minutes.",
+          ]
+          if summary_path:
+              with open(summary_path, "a", encoding="utf-8") as s:
+                  s.write("\n".join(ok) + "\n")
+
+          print("All workflow jobs comply with timeout-minutes policy.")
+          PY
