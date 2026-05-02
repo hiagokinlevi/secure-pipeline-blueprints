@@ -52,5 +52,7 @@
 
 **Goal**: Define security requirements as code, enforce them automatically.
 
-- [x] Reusable workflow policy: enforce `timeout-minutes` on all jobs
 - [ ] OPA policy: minimum security controls p
+
+## Automated Completions
+- [x] Add reusable workflow to enforce `timeout-minutes` on all jobs (cycle 46)
