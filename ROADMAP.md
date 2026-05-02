@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to enforce immutable container image digests (cycle 44)
+- [x] Add reusable workflow to enforce `persist-credentials: false` on `actions/checkout` (cycle 45)
