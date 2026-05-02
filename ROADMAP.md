@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to enforce secure `permissions` block in GitHub Actions workflows (cycle 43)
+- [x] Add reusable workflow to enforce immutable container image digests (cycle 44)
