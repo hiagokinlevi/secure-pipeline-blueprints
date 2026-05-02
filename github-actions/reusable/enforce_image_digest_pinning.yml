@@ -1,0 +1,218 @@
+name: Enforce Image Digest Pinning
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: Optional base ref to diff against (defaults to previous commit on push, PR base on pull_request)
+        required: false
+        type: string
+      head_ref:
+        description: Optional head ref to diff from (defaults to current SHA)
+        required: false
+        type: string
+      path_glob:
+        description: Glob for workflow files to scan
+        required: false
+        type: string
+        default: '.github/workflows/*.y*ml'
+      run_fixture_test:
+        description: Run built-in parser fixture test (for repository validation)
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  enforce-image-digest-pinning:
+    name: Enforce immutable container image digests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine changed workflow files
+        id: changed
+        shell: bash
+        env:
+          INPUT_BASE_REF: ${{ inputs.base_ref }}
+          INPUT_HEAD_REF: ${{ inputs.head_ref }}
+          INPUT_PATH_GLOB: ${{ inputs.path_glob }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          DEFAULT_BEFORE: ${{ github.event.before }}
+          DEFAULT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          base_ref="${INPUT_BASE_REF:-}"
+          head_ref="${INPUT_HEAD_REF:-}"
+
+          if [ -z "$base_ref" ]; then
+            if [ "$EVENT_NAME" = "pull_request" ] && [ -n "${PR_BASE_SHA:-}" ]; then
+              base_ref="$PR_BASE_SHA"
+            else
+              base_ref="${DEFAULT_BEFORE:-}"
+            fi
+          fi
+
+          if [ -z "$head_ref" ]; then
+            head_ref="${DEFAULT_SHA}"
+          fi
+
+          if [ -z "$base_ref" ] || [ "$base_ref" = "0000000000000000000000000000000000000000" ]; then
+            base_ref="$(git rev-parse "$head_ref^" 2>/dev/null || true)"
+          fi
+
+          if [ -z "$base_ref" ]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+            echo "No valid base ref found; skipping diff scan."
+            exit 0
+          fi
+
+          git diff --name-only "$base_ref" "$head_ref" -- '.github/workflows/*.yml' '.github/workflows/*.yaml' > /tmp/changed_workflows.txt || true
+
+          if [ ! -s /tmp/changed_workflows.txt ]; then
+            echo "files=" >> "$GITHUB_OUTPUT"
+            echo "No changed workflow files detected."
+            exit 0
+          fi
+
+          files_csv="$(paste -sd, /tmp/changed_workflows.txt)"
+          echo "files=$files_csv" >> "$GITHUB_OUTPUT"
+
+      - name: Enforce sha256 digest pinning for container images
+        if: steps.changed.outputs.files != ''
+        shell: bash
+        env:
+          FILES_CSV: ${{ steps.changed.outputs.files }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          import re
+          import sys
+          from pathlib import Path
+
+          files_csv = os.environ.get("FILES_CSV", "").strip()
+          files = [f.strip() for f in files_csv.split(",") if f.strip()]
+
+          mutable_tag = re.compile(r":(latest|v?\d+(?:\.\d+)*)$", re.IGNORECASE)
+          digest_present = re.compile(r"@sha256:[a-fA-F0-9]{64}$")
+          likely_image = re.compile(r"^[A-Za-z0-9./_-]+(?::[^@\s]+)?(?:@sha256:[a-fA-F0-9]{64})?$")
+
+          issues = []
+
+          def check_ref(ref: str, file: str, line_no: int, kind: str):
+            value = ref.strip().strip('"\'')
+            if not value:
+              return
+            if not likely_image.match(value):
+              return
+            if digest_present.search(value):
+              return
+            if ":" in value and mutable_tag.search(value):
+              issues.append((file, line_no, kind, value, "mutable tag without digest"))
+              return
+            if ":" in value and "@" not in value:
+              issues.append((file, line_no, kind, value, "tag pinning without digest"))
+
+          for fp in files:
+            p = Path(fp)
+            if not p.exists():
+              continue
+            lines = p.read_text(encoding="utf-8").splitlines()
+            for idx, line in enumerate(lines, start=1):
+              stripped = line.strip()
+
+              if stripped.startswith("container:"):
+                m_inline = re.match(r"container:\s*([^\s#]+)", stripped)
+                if m_inline:
+                  check_ref(m_inline.group(1), fp, idx, "container")
+                else:
+                  for j in range(idx, min(idx + 8, len(lines))):
+                    s2 = lines[j].strip()
+                    m_image = re.match(r"image:\s*([^\s#]+)", s2)
+                    if m_image:
+                      check_ref(m_image.group(1), fp, j + 1, "container.image")
+                      break
+
+              m_uses = re.match(r"uses:\s*docker://([^\s#]+)", stripped)
+              if m_uses:
+                check_ref(m_uses.group(1), fp, idx, "uses:docker")
+
+          if issues:
+            print("Found non-immutable container image references:")
+            for file, line_no, kind, ref, reason in issues:
+              print(f"- {file}:{line_no} [{kind}] {ref} ({reason})")
+            print("\nAll container images in workflows must be pinned with @sha256:<digest>.")
+            sys.exit(1)
+
+          print("All checked container image references are digest-pinned.")
+          PY
+
+      - name: Fixture test (pass/fail behavior)
+        if: inputs.run_fixture_test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import re
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          mutable_tag = re.compile(r":(latest|v?\d+(?:\.\d+)*)$", re.IGNORECASE)
+          digest_present = re.compile(r"@sha256:[a-fA-F0-9]{64}$")
+          likely_image = re.compile(r"^[A-Za-z0-9./_-]+(?::[^@\s]+)?(?:@sha256:[a-fA-F0-9]{64})?$")
+
+          def scan_text(text: str):
+            issues = []
+            lines = text.splitlines()
+            for i, line in enumerate(lines, 1):
+              s = line.strip()
+              refs = []
+              m = re.match(r"container:\s*([^\s#]+)", s)
+              if m:
+                refs.append(("container", m.group(1), i))
+              m2 = re.match(r"uses:\s*docker://([^\s#]+)", s)
+              if m2:
+                refs.append(("uses:docker", m2.group(1), i))
+              for kind, ref, ln in refs:
+                v = ref.strip().strip('"\'')
+                if likely_image.match(v) and not digest_present.search(v) and ":" in v:
+                  if mutable_tag.search(v) or "@" not in v:
+                    issues.append((kind, ln, v))
+            return issues
+
+          good = """
+          jobs:
+            test:
+              runs-on: ubuntu-latest
+              container: ghcr.io/acme/app:1.2.3@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+              steps:
+                - uses: docker://alpine:3.20@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          """
+
+          bad = """
+          jobs:
+            test:
+              runs-on: ubuntu-latest
+              container: ghcr.io/acme/app:latest
+              steps:
+                - uses: docker://alpine:v3
+          """
+
+          if scan_text(good):
+            print("Fixture failed: expected pinned images to pass")
+            sys.exit(1)
+          if not scan_text(bad):
+            print("Fixture failed: expected mutable tags to fail")
+            sys.exit(1)
+
+          print("Fixture test passed.")
+          PY
