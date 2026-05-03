@@ -1,0 +1,113 @@
+name: Policy - No self-hosted runners on PR
+
+on:
+  workflow_call:
+    inputs:
+      allowlist:
+        description: >-
+          Optional comma-separated allowlist of exceptions in the form
+          ".github/workflows/file.yml:job_id".
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  enforce:
+    name: Enforce no self-hosted on pull_request events
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import os
+          import sys
+          from pathlib import Path
+
+          try:
+              import yaml
+          except Exception:
+              print("ERROR: PyYAML is required but unavailable on this runner.", file=sys.stderr)
+              sys.exit(2)
+
+          def normalize_events(on_value):
+              if isinstance(on_value, str):
+                  return {on_value}
+              if isinstance(on_value, list):
+                  return {e for e in on_value if isinstance(e, str)}
+              if isinstance(on_value, dict):
+                  return {k for k in on_value.keys() if isinstance(k, str)}
+              return set()
+
+          def is_self_hosted(runs_on):
+              if isinstance(runs_on, str):
+                  return runs_on.strip() == "self-hosted"
+              if isinstance(runs_on, list):
+                  return any(isinstance(v, str) and v.strip() == "self-hosted" for v in runs_on)
+              return False
+
+          allow_raw = os.environ.get("ALLOWLIST", "").strip()
+          allowlist = {item.strip() for item in allow_raw.split(",") if item.strip()}
+
+          wf_dir = Path(".github/workflows")
+          if not wf_dir.exists():
+              print("No .github/workflows directory found; nothing to validate.")
+              sys.exit(0)
+
+          violations = []
+
+          for wf in sorted(wf_dir.glob("*.y*ml")):
+              try:
+                  data = yaml.safe_load(wf.read_text(encoding="utf-8"))
+              except Exception as exc:
+                  print(f"ERROR: Failed to parse {wf}: {exc}", file=sys.stderr)
+                  sys.exit(2)
+
+              if not isinstance(data, dict):
+                  continue
+
+              events = normalize_events(data.get("on"))
+              if not ({"pull_request", "pull_request_target"} & events):
+                  continue
+
+              jobs = data.get("jobs")
+              if not isinstance(jobs, dict):
+                  continue
+
+              for job_id, job in jobs.items():
+                  if not isinstance(job, dict):
+                      continue
+                  if not is_self_hosted(job.get("runs-on")):
+                      continue
+
+                  key = f"{wf.as_posix()}:{job_id}"
+                  if key in allowlist:
+                      continue
+
+                  violations.append(key)
+
+          if violations:
+              print("Policy violation: self-hosted runners are not allowed for pull_request/pull_request_target workflows.")
+              print("Found:")
+              for v in violations:
+                  print(f"  - {v}")
+              print("\nTo explicitly allow a vetted internal exception, pass input allowlist with entries like:")
+              print("  .github/workflows/ci.yml:trusted_job")
+              sys.exit(1)
+
+          print("Policy check passed: no disallowed self-hosted runner usage on PR-triggered workflows.")
+          PY
+        env:
+          ALLOWLIST: ${{ inputs.allowlist }}
+
+# Usage snippet:
+# jobs:
+#   policy-no-self-hosted-on-pr:
+#     uses: your-org/secure-pipeline-blueprints/.github/workflows/policy_no_self_hosted_on_pr.yml@main
+#     with:
+#       allowlist: ".github/workflows/internal.yml:trusted-internal-job"
