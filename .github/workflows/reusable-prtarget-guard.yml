@@ -1,0 +1,93 @@
+name: reusable-prtarget-guard
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    name: Detect unsafe pull_request_target checkout patterns
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan changed workflow files
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_SHA="${{ github.event.pull_request.base.sha || '' }}"
+          HEAD_SHA="${{ github.sha }}"
+
+          if [ -z "$BASE_SHA" ]; then
+            if git rev-parse --verify "HEAD^" >/dev/null 2>&1; then
+              BASE_SHA="$(git rev-parse HEAD^)"
+            else
+              BASE_SHA="$HEAD_SHA"
+            fi
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA" -- '.github/workflows/*.yml' '.github/workflows/*.yaml' || true)
+
+          if [ "${#changed_files[@]}" -eq 0 ]; then
+            echo "No changed workflow files detected."
+            exit 0
+          fi
+
+          python3 - <<'PY' "${changed_files[@]}"
+          import re
+          import sys
+          from pathlib import Path
+
+          files = [Path(p) for p in sys.argv[1:]]
+
+          prt_re = re.compile(r'^\s*pull_request_target\s*:\s*$', re.IGNORECASE)
+          checkout_re = re.compile(r'uses\s*:\s*actions/checkout@', re.IGNORECASE)
+          unsafe_ref_re = re.compile(
+              r'(github\.event\.pull_request\.head\.(sha|ref))|\brefs/pull/\$\{\{\s*github\.event\.pull_request\.number\s*\}\}/head\b|\b/head\b',
+              re.IGNORECASE,
+          )
+          ref_line_re = re.compile(r'^\s*ref\s*:\s*(.+?)\s*$', re.IGNORECASE)
+
+          violations = []
+
+          for wf in files:
+            text = wf.read_text(encoding='utf-8', errors='ignore')
+            if not prt_re.search(text):
+              continue
+
+            lines = text.splitlines()
+            for i, line in enumerate(lines):
+              if not checkout_re.search(line):
+                continue
+
+              window = lines[i:i + 25]
+              for wline in window:
+                m = ref_line_re.match(wline)
+                if not m:
+                  continue
+                ref_value = m.group(1)
+                if unsafe_ref_re.search(ref_value):
+                  violations.append((str(wf), i + 1, ref_value.strip()))
+
+          if violations:
+            print('::error::Unsafe pull_request_target checkout detected.')
+            print('')
+            print('The following workflow changes are unsafe because pull_request_target runs with elevated privileges and must not checkout fork HEAD code:')
+            for file, line, refv in violations:
+              print(f'  - {file}:{line} -> ref: {refv}')
+            print('')
+            print('Remediation:')
+            print('  1) In pull_request_target workflows, do NOT use github.event.pull_request.head.sha/head.ref or refs/pull/*/head.')
+            print('  2) Use the trusted default checkout behavior, or explicitly checkout base/default refs (e.g., github.event.pull_request.base.sha).')
+            print('  3) If untrusted PR code must run, move execution to a pull_request workflow with least privileges and no secrets.')
+            sys.exit(1)
+
+          print('No unsafe pull_request_target checkout patterns found in changed workflow files.')
+          PY
