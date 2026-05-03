@@ -1,0 +1,10 @@
+{
+  "minimum_approving_reviews": 1,
+  "require_code_owner_reviews": false,
+  "dismiss_stale_reviews": true,
+  "required_status_checks": [
+    "build",
+    "test",
+    "security"
+  ]
+}
