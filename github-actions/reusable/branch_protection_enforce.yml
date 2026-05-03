@@ -1,0 +1,137 @@
+name: Branch Protection Baseline Enforce
+
+on:
+  workflow_call:
+    inputs:
+      policy_file:
+        description: Path to branch protection baseline policy JSON
+        required: false
+        type: string
+        default: shared/branch_protection_policy.json
+      repository:
+        description: Owner/repo target. Defaults to current repository.
+        required: false
+        type: string
+        default: ""
+    secrets:
+      token:
+        description: GitHub token with administration:read (or repo admin) permissions
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  enforce:
+    name: Enforce default branch protection baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enforce baseline
+        env:
+          INPUT_REPOSITORY: ${{ inputs.repository }}
+          INPUT_POLICY_FILE: ${{ inputs.policy_file }}
+          GH_TOKEN: ${{ secrets.token != '' && secrets.token || github.token }}
+          CURRENT_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          REPO="${INPUT_REPOSITORY:-}"
+          if [ -z "$REPO" ]; then
+            REPO="$CURRENT_REPO"
+          fi
+
+          OWNER="${REPO%%/*}"
+          REPO_NAME="${REPO##*/}"
+
+          if [ ! -f "$INPUT_POLICY_FILE" ]; then
+            echo "::error::Policy file not found: $INPUT_POLICY_FILE"
+            exit 1
+          fi
+
+          min_reviews="$(jq -r '.minimum_approving_reviews // 1' "$INPUT_POLICY_FILE")"
+          require_code_owner_reviews="$(jq -r '.require_code_owner_reviews // false' "$INPUT_POLICY_FILE")"
+          dismiss_stale_reviews="$(jq -r '.dismiss_stale_reviews // true' "$INPUT_POLICY_FILE")"
+          required_checks_json="$(jq -c '.required_status_checks // []' "$INPUT_POLICY_FILE")"
+
+          if ! [[ "$min_reviews" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid minimum_approving_reviews in policy: $min_reviews"
+            exit 1
+          fi
+
+          repo_json="$(curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OWNER/$REPO_NAME")"
+
+          default_branch="$(echo "$repo_json" | jq -r '.default_branch')"
+          if [ -z "$default_branch" ] || [ "$default_branch" = "null" ]; then
+            echo "::error::Unable to determine default branch for $REPO"
+            exit 1
+          fi
+
+          protection_json="$(curl -fsSL \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/$OWNER/$REPO_NAME/branches/$default_branch/protection")" || {
+              echo "::error::Branch protection not configured for $REPO:$default_branch"
+              exit 1
+            }
+
+          errors=0
+
+          actual_reviews="$(echo "$protection_json" | jq -r '.required_pull_request_reviews.required_approving_review_count // 0')"
+          if [ "$actual_reviews" -lt "$min_reviews" ]; then
+            echo "::error::required_approving_review_count=$actual_reviews, expected >= $min_reviews"
+            errors=1
+          fi
+
+          actual_code_owner_reviews="$(echo "$protection_json" | jq -r '.required_pull_request_reviews.require_code_owner_reviews // false')"
+          if [ "$require_code_owner_reviews" = "true" ] && [ "$actual_code_owner_reviews" != "true" ]; then
+            echo "::error::require_code_owner_reviews is not enabled"
+            errors=1
+          fi
+
+          actual_dismiss_stale="$(echo "$protection_json" | jq -r '.required_pull_request_reviews.dismiss_stale_reviews // false')"
+          if [ "$dismiss_stale_reviews" = "true" ] && [ "$actual_dismiss_stale" != "true" ]; then
+            echo "::error::dismiss_stale_reviews is not enabled"
+            errors=1
+          fi
+
+          strict_checks="$(echo "$protection_json" | jq -r '.required_status_checks.strict // false')"
+          if [ "$strict_checks" != "true" ]; then
+            echo "::error::required_status_checks.strict is not enabled"
+            errors=1
+          fi
+
+          missing_checks="$(jq -r --argjson required "$required_checks_json" '
+            .required_status_checks.checks // [] | map(.context) as $actual |
+            [ $required[] | select(($actual | index(.)) == null) ] | join(", ")
+          ' <<< "$protection_json")"
+
+          if [ -n "$missing_checks" ]; then
+            echo "::error::Missing required status checks: $missing_checks"
+            errors=1
+          fi
+
+          allow_force_pushes="$(echo "$protection_json" | jq -r '.allow_force_pushes.enabled // true')"
+          if [ "$allow_force_pushes" = "true" ]; then
+            echo "::error::Force pushes are allowed on default branch"
+            errors=1
+          fi
+
+          allow_deletions="$(echo "$protection_json" | jq -r '.allow_deletions.enabled // true')"
+          if [ "$allow_deletions" = "true" ]; then
+            echo "::error::Branch deletions are allowed on default branch"
+            errors=1
+          fi
+
+          if [ "$errors" -ne 0 ]; then
+            echo "::error::Branch protection baseline enforcement failed for $REPO:$default_branch"
+            exit 1
+          fi
+
+          echo "Branch protection baseline is compliant for $REPO:$default_branch"
