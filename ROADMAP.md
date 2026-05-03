@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to block self-hosted runners for untrusted pull_request events (cycle 48)
+- [x] Add reusable workflow to fail on unsafe pull_request_target checkout of fork HEAD (cycle 49)
