@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to upload SARIF from Semgrep/Trivy/Checkov to Security tab with severity gate (cycle 50)
+- [x] Add CODEOWNERS to require security-team review for pipeline and controls changes (cycle 52)
