@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to fail on unsafe pull_request_target checkout of fork HEAD (cycle 49)
+- [x] Add reusable workflow to upload SARIF from Semgrep/Trivy/Checkov to Security tab with severity gate (cycle 50)
