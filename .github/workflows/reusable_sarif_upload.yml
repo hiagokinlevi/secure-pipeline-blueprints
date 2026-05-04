@@ -1,0 +1,127 @@
+name: Reusable SARIF Upload
+
+on:
+  workflow_call:
+    inputs:
+      semgrep_sarif:
+        description: "Path to Semgrep SARIF file"
+        required: false
+        type: string
+        default: ""
+      trivy_sarif:
+        description: "Path to Trivy SARIF file"
+        required: false
+        type: string
+        default: ""
+      checkov_sarif:
+        description: "Path to Checkov SARIF file"
+        required: false
+        type: string
+        default: ""
+      high_critical_threshold:
+        description: "Maximum allowed count of high/critical findings across provided SARIF files"
+        required: false
+        type: number
+        default: 0
+
+jobs:
+  upload-and-gate:
+    name: Upload SARIF and enforce severity gate
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+
+    steps:
+      - name: Upload Semgrep SARIF
+        if: ${{ inputs.semgrep_sarif != '' }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.semgrep_sarif }}
+          category: semgrep
+
+      - name: Upload Trivy SARIF
+        if: ${{ inputs.trivy_sarif != '' }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.trivy_sarif }}
+          category: trivy
+
+      - name: Upload Checkov SARIF
+        if: ${{ inputs.checkov_sarif != '' }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.checkov_sarif }}
+          category: checkov
+
+      - name: Enforce high/critical threshold
+        env:
+          SEMGREP_SARIF: ${{ inputs.semgrep_sarif }}
+          TRIVY_SARIF: ${{ inputs.trivy_sarif }}
+          CHECKOV_SARIF: ${{ inputs.checkov_sarif }}
+          THRESHOLD: ${{ inputs.high_critical_threshold }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          total=0
+          files=("$SEMGREP_SARIF" "$TRIVY_SARIF" "$CHECKOV_SARIF")
+
+          for f in "${files[@]}"; do
+            if [[ -n "$f" && -f "$f" ]]; then
+              count=$(python - "$f" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path, 'r', encoding='utf-8') as fh:
+    data = json.load(fh)
+
+def is_high_or_critical(result):
+    level = str(result.get('level', '')).lower()
+    if level == 'error':
+        return True
+
+    props = result.get('properties', {}) or {}
+    sev = str(
+        props.get('security-severity')
+        or props.get('severity')
+        or props.get('Severity')
+        or ''
+    ).strip().lower()
+
+    if sev in {'high', 'critical'}:
+        return True
+
+    try:
+        if sev and float(sev) >= 7.0:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+c = 0
+for run in data.get('runs', []):
+    for result in run.get('results', []):
+        if is_high_or_critical(result):
+            c += 1
+
+print(c)
+PY
+)
+              echo "${f}: high/critical findings=${count}"
+              total=$((total + count))
+            elif [[ -n "$f" ]]; then
+              echo "Warning: SARIF path provided but file not found: $f"
+            fi
+          done
+
+          echo "Total high/critical findings: ${total}"
+          echo "Allowed threshold: ${THRESHOLD}"
+
+          if (( total > THRESHOLD )); then
+            echo "Severity gate failed: ${total} findings exceed threshold ${THRESHOLD}."
+            exit 1
+          fi
+
+          echo "Severity gate passed."
