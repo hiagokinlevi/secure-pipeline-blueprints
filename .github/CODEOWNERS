@@ -1,0 +1,9 @@
+# Global fallback owner
+* @security-team
+
+# Security-critical pipeline and control assets
+github-actions/** @security-team
+gitlab-ci/** @security-team
+azure-devops/** @security-team
+controls/** @security-team
+shared/** @security-team
