@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add CODEOWNERS to require security-team review for pipeline and controls changes (cycle 52)
+- [x] Add reusable workflow to enforce `concurrency` cancellation on PR-triggered workflows (cycle 53)
