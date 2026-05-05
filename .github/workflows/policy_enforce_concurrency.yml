@@ -1,0 +1,107 @@
+name: Policy - Enforce PR Concurrency Cancellation
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enforce-pr-concurrency:
+    name: Enforce concurrency on PR workflows
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate workflow concurrency policy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          WORKFLOWS_DIR = Path('.github/workflows')
+
+          if not WORKFLOWS_DIR.exists():
+              print('No .github/workflows directory found; nothing to validate.')
+              sys.exit(0)
+
+          def has_pr_event(on_value):
+              if on_value is None:
+                  return False
+              if isinstance(on_value, str):
+                  return on_value in ('pull_request', 'pull_request_target')
+              if isinstance(on_value, list):
+                  return any(isinstance(i, str) and i in ('pull_request', 'pull_request_target') for i in on_value)
+              if isinstance(on_value, dict):
+                  return any(k in ('pull_request', 'pull_request_target') for k in on_value.keys())
+              return False
+
+          def group_is_stable(group_value):
+              if not isinstance(group_value, str) or not group_value.strip():
+                  return False
+
+              # Require expression usage and disallow run-attempt style entropy.
+              if '${{' not in group_value:
+                  return False
+              unstable_tokens = ('github.run_id', 'github.run_number', 'github.run_attempt', 'strategy.job-index', 'matrix.')
+              if any(tok in group_value for tok in unstable_tokens):
+                  return False
+
+              # Accept common stable patterns (workflow/ref or workflow/head_ref).
+              stable_markers = ('github.workflow', 'github.ref', 'github.head_ref', 'github.event.pull_request.number')
+              return any(tok in group_value for tok in stable_markers)
+
+          violations = []
+
+          for wf in sorted(WORKFLOWS_DIR.glob('*.y*ml')):
+              try:
+                  data = yaml.safe_load(wf.read_text(encoding='utf-8'))
+              except Exception as e:
+                  violations.append(f"{wf}: invalid YAML ({e})")
+                  continue
+
+              if not isinstance(data, dict):
+                  continue
+
+              if not has_pr_event(data.get('on')):
+                  continue
+
+              concurrency = data.get('concurrency')
+              if concurrency is None:
+                  violations.append(f"{wf}: missing top-level 'concurrency' block for pull_request/pull_request_target workflow")
+                  continue
+
+              if isinstance(concurrency, str):
+                  violations.append(f"{wf}: 'concurrency' must be a mapping with 'group' and 'cancel-in-progress: true', not a string")
+                  continue
+
+              if not isinstance(concurrency, dict):
+                  violations.append(f"{wf}: 'concurrency' must be a mapping")
+                  continue
+
+              cancel = concurrency.get('cancel-in-progress')
+              if cancel is not True:
+                  violations.append(f"{wf}: 'concurrency.cancel-in-progress' must be true")
+
+              group = concurrency.get('group')
+              if not group_is_stable(group):
+                  violations.append(
+                      f"{wf}: 'concurrency.group' must be a stable expression (e.g., ${{{{ github.workflow }}}}-${{{{ github.ref }}}})"
+                  )
+
+          if violations:
+              print('Concurrency policy violations found:\n')
+              for v in violations:
+                  print(f"- {v}")
+              sys.exit(1)
+
+          print('All PR-triggered workflows satisfy concurrency cancellation policy.')
+          PY
