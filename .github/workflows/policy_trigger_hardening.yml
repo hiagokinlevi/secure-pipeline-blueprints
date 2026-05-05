@@ -1,0 +1,98 @@
+name: Policy - Trigger Hardening
+
+on:
+  workflow_call:
+    inputs:
+      workflows_path:
+        description: "Path containing workflow YAML files"
+        required: false
+        type: string
+        default: ".github/workflows"
+      allowlist_comment_token:
+        description: "Inline comment token required to allow pull_request_target"
+        required: false
+        type: string
+        default: "trigger-hardening: allow pull_request_target"
+
+permissions:
+  contents: read
+
+jobs:
+  enforce-trigger-hardening:
+    name: Enforce trigger hardening policy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate workflow triggers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workflows_path='${{ inputs.workflows_path }}'
+          token='${{ inputs.allowlist_comment_token }}'
+
+          if [ ! -d "$workflows_path" ]; then
+            echo "No workflow directory found at '$workflows_path'; skipping policy check."
+            exit 0
+          fi
+
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          workflows_path = Path("${{ inputs.workflows_path }}")
+          token = "${{ inputs.allowlist_comment_token }}"
+
+          risky_markers = [
+              "actions/checkout",
+              "run:",
+              "uses:",
+              "secrets.",
+              "id-token:",
+              "write",
+          ]
+
+          violations = []
+
+          for wf in sorted(workflows_path.glob("*.y*ml")):
+              text = wf.read_text(encoding="utf-8", errors="ignore")
+              lines = text.splitlines()
+
+              has_target = any("pull_request_target" in line for line in lines)
+              if not has_target:
+                  continue
+
+              allowed = any(("pull_request_target" in line and token in line) for line in lines)
+
+              risky_hits = []
+              for marker in risky_markers:
+                  for idx, line in enumerate(lines, start=1):
+                      if marker in line:
+                          risky_hits.append((idx, marker))
+                          break
+
+              if not allowed:
+                  violations.append(
+                      f"{wf}: uses 'pull_request_target' without explicit allowlist comment token '{token}' on the same line"
+                  )
+
+              if risky_hits:
+                  hit_str = ", ".join([f"line {ln} ({mk})" for ln, mk in risky_hits[:6]])
+                  violations.append(
+                      f"{wf}: risky execution markers detected with pull_request_target present: {hit_str}"
+                  )
+
+          if violations:
+              print("Trigger hardening policy failed:")
+              for v in violations:
+                  print(f"- {v}")
+              print("\nUsage snippet:")
+              print("jobs:")
+              print("  trigger-hardening:")
+              print("    uses: <owner>/<repo>/.github/workflows/policy_trigger_hardening.yml@<ref>")
+              sys.exit(1)
+
+          print("Trigger hardening policy passed: no unsafe pull_request_target usage detected.")
+          PY
