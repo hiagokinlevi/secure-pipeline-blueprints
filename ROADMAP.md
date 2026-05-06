@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to enforce workflow trigger hardening (`pull_request` over `pull_request_target`) (cycle 54)
+- [x] Add reusable workflow to enforce third-party GitHub Actions are pinned to full commit SHAs (cycle 55)
