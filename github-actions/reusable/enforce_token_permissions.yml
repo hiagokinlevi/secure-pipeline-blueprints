@@ -1,0 +1,148 @@
+name: Enforce Least-Privilege GITHUB_TOKEN Permissions
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: "Base git ref to diff against (default: origin/main)"
+        required: false
+        type: string
+        default: "origin/main"
+      workflow_glob:
+        description: "Workflow file glob to inspect"
+        required: false
+        type: string
+        default: ".github/workflows/*.yml .github/workflows/*.yaml github-actions/**/*.yml github-actions/**/*.yaml"
+      allowed_write_permissions:
+        description: "Comma-separated allowlist of write-scoped permissions"
+        required: false
+        type: string
+        default: "security-events"
+
+jobs:
+  enforce-token-permissions:
+    name: Validate workflow token permissions
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce least-privilege permissions
+        shell: bash
+        env:
+          BASE_REF: ${{ inputs.base_ref }}
+          WORKFLOW_GLOB: ${{ inputs.workflow_glob }}
+          ALLOWED_WRITE_PERMISSIONS: ${{ inputs.allowed_write_permissions }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+          import sys
+          from pathlib import Path
+
+          try:
+              import yaml
+          except Exception:
+              print("::error::PyYAML is required but unavailable on runner")
+              sys.exit(2)
+
+          base_ref = os.getenv("BASE_REF", "origin/main")
+          glob_patterns = os.getenv("WORKFLOW_GLOB", "").split()
+          allowed = {
+              p.strip() for p in os.getenv("ALLOWED_WRITE_PERMISSIONS", "security-events").split(",") if p.strip()
+          }
+
+          def sh(cmd):
+              return subprocess.check_output(cmd, text=True).strip()
+
+          # Ensure base ref exists locally when possible.
+          try:
+              subprocess.run(["git", "fetch", "--no-tags", "origin", base_ref.split("origin/")[-1]], check=False)
+          except Exception:
+              pass
+
+          diff_cmd = ["git", "diff", "--name-only", f"{base_ref}...HEAD"]
+          try:
+              changed = sh(diff_cmd).splitlines()
+          except subprocess.CalledProcessError:
+              print(f"::warning::Unable to diff against '{base_ref}', falling back to HEAD~1")
+              try:
+                  changed = sh(["git", "diff", "--name-only", "HEAD~1...HEAD"]).splitlines()
+              except Exception:
+                  changed = []
+
+          def matches_glob(path):
+              p = Path(path)
+              for g in glob_patterns:
+                  if p.match(g):
+                      return True
+              return False
+
+          targets = [p for p in changed if p.endswith((".yml", ".yaml")) and matches_glob(p)]
+          if not targets:
+              print("No changed workflow YAML files matched policy scope.")
+              sys.exit(0)
+
+          broad_markers = {"write-all", "read-all"}
+          violations = []
+
+          def collect_job_permissions(doc):
+              jobs = doc.get("jobs") if isinstance(doc, dict) else None
+              if not isinstance(jobs, dict):
+                  return []
+              out = []
+              for job_name, job_def in jobs.items():
+                  if not isinstance(job_def, dict):
+                      continue
+                  out.append((job_name, job_def.get("permissions")))
+              return out
+
+          for file_path in targets:
+              try:
+                  content = Path(file_path).read_text(encoding="utf-8")
+                  doc = yaml.safe_load(content) or {}
+              except Exception as e:
+                  violations.append((file_path, 1, f"Failed to parse YAML: {e}"))
+                  continue
+
+              # Root-level permissions policy.
+              root_perm = doc.get("permissions") if isinstance(doc, dict) else None
+              if isinstance(root_perm, str) and root_perm in broad_markers:
+                  violations.append((file_path, 1, f"Top-level permissions uses forbidden broad scope '{root_perm}'"))
+              elif isinstance(root_perm, dict):
+                  for scope, level in root_perm.items():
+                      if str(level).strip().lower() == "write" and scope not in allowed:
+                          violations.append((file_path, 1, f"Top-level write permission '{scope}: write' is not allowlisted"))
+
+              # Job-level permissions policy.
+              line_map = {}
+              for idx, line in enumerate(content.splitlines(), start=1):
+                  m = re.match(r"^\s{2}([A-Za-z0-9_-]+):\s*$", line)
+                  if m:
+                      line_map[m.group(1)] = idx
+
+              for job_name, perm in collect_job_permissions(doc):
+                  line_no = line_map.get(job_name, 1)
+                  if isinstance(perm, str) and perm in broad_markers:
+                      violations.append((file_path, line_no, f"Job '{job_name}' uses forbidden broad scope '{perm}'"))
+                  elif isinstance(perm, dict):
+                      for scope, level in perm.items():
+                          if str(level).strip().lower() == "write" and scope not in allowed:
+                              violations.append((file_path, line_no, f"Job '{job_name}' grants non-allowlisted write scope '{scope}: write'"))
+
+          if violations:
+              print(f"Detected {len(violations)} permission policy violation(s):")
+              for fp, ln, msg in violations:
+                  print(f"::error file={fp},line={ln}::{msg}")
+              print("\nPolicy: avoid broad token scopes (write-all/read-all) and restrict write permissions to allowlist:")
+              print(f"Allowed write scopes: {', '.join(sorted(allowed)) if allowed else '(none)'}")
+              sys.exit(1)
+
+          print("All changed workflow files satisfy least-privilege token permission policy.")
+          PY
