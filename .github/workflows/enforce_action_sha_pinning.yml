@@ -1,0 +1,98 @@
+name: Enforce GitHub Action SHA Pinning
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  enforce-sha-pinning:
+    name: Enforce third-party action SHA pinning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate workflow uses: references are pinned to full commit SHAs
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          workflow_dir = Path('.github/workflows')
+          if not workflow_dir.exists():
+              print('No .github/workflows directory found; nothing to validate.')
+              sys.exit(0)
+
+          # Match basic YAML key usage for "uses:" while preserving line info.
+          uses_line = re.compile(r'^\s*uses\s*:\s*(["\']?)([^"\'#]+)\1\s*(?:#.*)?$')
+          full_sha = re.compile(r'^[0-9a-fA-F]{40}$')
+
+          offenders = []
+
+          for wf in sorted(workflow_dir.glob('*.y*ml')):
+              for i, raw in enumerate(wf.read_text(encoding='utf-8').splitlines(), start=1):
+                  m = uses_line.match(raw)
+                  if not m:
+                      continue
+
+                  ref = m.group(2).strip()
+
+                  # Allow local actions and in-repo reusable workflows.
+                  if ref.startswith('./'):
+                      continue
+                  if ref.startswith('/'):
+                      continue
+
+                  # Docker-based action reference; enforce digest pinning.
+                  if ref.startswith('docker://'):
+                      if '@sha256:' in ref:
+                          continue
+                      offenders.append((wf, i, ref, 'docker action must be pinned by digest (docker://...@sha256:...)'))
+                      continue
+
+                  # GitHub action/reusable workflow reference should be owner/repo[/path]@ref
+                  if '@' not in ref:
+                      offenders.append((wf, i, ref, 'missing @<40-char commit SHA> ref'))
+                      continue
+
+                  target, version = ref.rsplit('@', 1)
+
+                  # In-repo reusable workflow reference like ./.github/workflows/x.yml@main is local and allowed.
+                  if target.startswith('./') or target.startswith('/'):
+                      continue
+
+                  if not full_sha.fullmatch(version):
+                      offenders.append((wf, i, ref, 'ref is not a full 40-character commit SHA'))
+
+          if offenders:
+              print('❌ GitHub Actions SHA pinning policy failed.')
+              print('The following uses: references are not pinned to immutable full commit SHAs:\n')
+              for wf, line, ref, why in offenders:
+                  print(f' - {wf}:{line}: {ref} ({why})')
+
+              print('\nAllowed exceptions:')
+              print(' - Local actions/reusable workflows (./...)')
+              print(' - Docker actions pinned by digest (docker://...@sha256:...)')
+              print('\nFix by replacing tags/branches (e.g., @v4, @main) with full commit SHAs.')
+              sys.exit(1)
+
+          print('✅ All workflow uses: references are pinned to full commit SHAs (or are allowed local/digest-pinned references).')
+          PY
+
+      - name: Usage note
+        if: always()
+        run: |
+          cat <<'NOTE'
+          Reusable policy workflow usage:
+
+            jobs:
+              action-sha-policy:
+                uses: <org>/<repo>/.github/workflows/enforce_action_sha_pinning.yml@<40-char-commit-sha>
+
+          Add this as a required status check to enforce immutable action pinning across workflow files.
+          NOTE
