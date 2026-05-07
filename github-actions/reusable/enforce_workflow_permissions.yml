@@ -1,0 +1,91 @@
+name: Enforce Minimal Workflow Permissions
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: "Base branch/ref used to compute changed workflow files"
+        required: false
+        type: string
+        default: ""
+
+jobs:
+  enforce-permissions:
+    name: Validate workflow permissions blocks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce least-privilege workflow permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BASE_REF="${{ inputs.base_ref }}"
+          if [[ -z "$BASE_REF" ]]; then
+            if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+              BASE_REF="${{ github.event.pull_request.base.ref }}"
+            else
+              BASE_REF="${{ github.event.repository.default_branch }}"
+            fi
+          fi
+
+          echo "Using base ref: ${BASE_REF}"
+          git fetch --no-tags --prune --depth=1 origin "${BASE_REF}" || true
+
+          mapfile -t changed < <(git diff --name-only "origin/${BASE_REF}...HEAD" -- '.github/workflows/*.yml' '.github/workflows/*.yaml' || true)
+
+          if [[ ${#changed[@]} -eq 0 ]]; then
+            echo "No changed workflow files under .github/workflows/."
+            exit 0
+          fi
+
+          echo "Changed workflow files:"
+          printf ' - %s\n' "${changed[@]}"
+
+          failed=0
+          for file in "${changed[@]}"; do
+            [[ -f "$file" ]] || continue
+
+            if ! awk 'BEGIN{ok=0} /^[^[:space:]#][^:]*:[[:space:]]*$/ {if ($1=="permissions:") ok=1} END{exit ok?0:1}' "$file"; then
+              echo "ERROR: ${file} is missing top-level permissions: block"
+              failed=1
+              continue
+            fi
+
+            if grep -Eq '^[[:space:]]*permissions:[[:space:]]*write-all[[:space:]]*$' "$file"; then
+              echo "ERROR: ${file} uses forbidden permissions: write-all"
+              failed=1
+            fi
+
+            if grep -Eq '^[[:space:]]*permissions:[[:space:]]*\{[^}]*\bwrite-all\b' "$file"; then
+              echo "ERROR: ${file} uses forbidden permissions map containing write-all"
+              failed=1
+            fi
+
+            if grep -Eq '^[[:space:]]*permissions:[[:space:]]*\{[^}]*\bsecurity-events:[[:space:]]*write\b' "$file"; then
+              :
+            fi
+
+            if grep -Eq '^[[:space:]]{2,}[A-Za-z0-9_-]+:[[:space:]]*write[[:space:]]*$' "$file"; then
+              while IFS= read -r scope; do
+                key="$(echo "$scope" | sed -E 's/^[[:space:]]*([A-Za-z0-9_-]+):.*/\1/')"
+                if [[ "$key" != "security-events" ]]; then
+                  echo "ERROR: ${file} grants disallowed write scope: ${key}: write"
+                  failed=1
+                fi
+              done < <(grep -E '^[[:space:]]{2,}[A-Za-z0-9_-]+:[[:space:]]*write[[:space:]]*$' "$file")
+            fi
+          done
+
+          if [[ "$failed" -ne 0 ]]; then
+            echo "One or more workflow permission policy checks failed."
+            exit 1
+          fi
+
+          echo "All changed workflow files passed permission policy checks."
