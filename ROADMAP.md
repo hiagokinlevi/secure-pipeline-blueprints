@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to enforce minimal workflow permissions block (cycle 57)
+- [x] Add reusable workflow to enforce `permissions: {}` at workflow root before job-level grants (cycle 58)
