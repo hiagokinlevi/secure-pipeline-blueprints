@@ -55,4 +55,4 @@
 - [ ] OPA policy: minimum security controls p
 
 ## Automated Completions
-- [x] Add reusable workflow to enforce least-privilege `GITHUB_TOKEN` scopes (cycle 56)
+- [x] Add reusable workflow to enforce minimal workflow permissions block (cycle 57)
