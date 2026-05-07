@@ -1,0 +1,85 @@
+name: Enforce Workflow Root Permissions Baseline
+
+on:
+  workflow_call: {}
+
+permissions: {}
+
+jobs:
+  enforce-root-permissions:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate root-level permissions baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import glob
+          import os
+          import sys
+
+          try:
+              import yaml
+          except Exception as e:
+              print(f"::error::PyYAML is required but unavailable: {e}")
+              sys.exit(2)
+
+          workflow_files = sorted(glob.glob('.github/workflows/*.yml')) + sorted(glob.glob('.github/workflows/*.yaml'))
+          if not workflow_files:
+              print('No workflow files found in .github/workflows; skipping.')
+              sys.exit(0)
+
+          violations = []
+
+          for path in workflow_files:
+              base = os.path.basename(path)
+
+              # Avoid self-referential policy failures if this reusable is copied into .github/workflows.
+              if base.startswith('enforce_root_permissions'):
+                  continue
+
+              try:
+                  with open(path, 'r', encoding='utf-8') as f:
+                      doc = yaml.safe_load(f)
+              except Exception as e:
+                  violations.append((path, f'invalid YAML: {e}'))
+                  continue
+
+              if not isinstance(doc, dict):
+                  violations.append((path, 'workflow must be a YAML mapping/object'))
+                  continue
+
+              if 'permissions' not in doc:
+                  violations.append((path, "missing root-level 'permissions' (must be {})"))
+                  continue
+
+              perms = doc.get('permissions')
+
+              # Accept explicit deny-all at root only.
+              # Equivalent forms accepted:
+              # - permissions: {}
+              # - permissions:
+              #     actions: none
+              #     checks: none
+              #     ... (all specified scopes are 'none')
+              if perms == {}:
+                  continue
+
+              if isinstance(perms, dict) and perms and all(str(v).strip().lower() == 'none' for v in perms.values()):
+                  continue
+
+              violations.append((path, "root 'permissions' must be {} (or all scopes explicitly set to 'none')"))
+
+          if violations:
+              print('::group::Root permissions policy violations')
+              for path, msg in violations:
+                  print(f"::error file={path}::{msg}")
+              print('::endgroup::')
+              sys.exit(1)
+
+          print(f'Validated {len(workflow_files)} workflow file(s): root permissions baseline is enforced.')
+          PY
