@@ -1,0 +1,116 @@
+name: Reusable Trigger Duplication Guard
+
+on:
+  workflow_call:
+    inputs:
+      workflow_glob:
+        description: "Glob used to discover workflow files"
+        required: false
+        type: string
+        default: ".github/workflows/*.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  detect-duplicate-triggers:
+    name: Detect duplicate workflow trigger scopes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Guard against overlapping push/pull_request triggers
+        shell: bash
+        env:
+          WORKFLOW_GLOB: ${{ inputs.workflow_glob }}
+        run: |
+          set -euo pipefail
+
+          python - <<'PY'
+          import glob
+          import json
+          import sys
+          from pathlib import Path
+
+          import yaml
+
+          workflow_glob = (Path('.').as_posix() + '/' + "${WORKFLOW_GLOB}").replace('//', '/')
+          files = sorted(glob.glob(workflow_glob))
+
+          if not files:
+              print(f"No workflow files found for glob: {workflow_glob}")
+              sys.exit(0)
+
+          def to_list(value):
+              if value is None:
+                  return []
+              if isinstance(value, list):
+                  return [str(v) for v in value]
+              return [str(value)]
+
+          def normalize_event_config(config):
+              # `on: push` / `on: [push, pull_request]` / `on: {push: ..., pull_request: ...}`
+              if isinstance(config, str):
+                  return {config: {}}
+              if isinstance(config, list):
+                  return {str(v): {} for v in config}
+              if isinstance(config, dict):
+                  return config
+              return {}
+
+          violations = []
+
+          for wf in files:
+              p = Path(wf)
+              try:
+                  data = yaml.safe_load(p.read_text(encoding='utf-8')) or {}
+              except Exception as e:
+                  violations.append({
+                      "file": wf,
+                      "reason": f"Failed to parse YAML: {e}",
+                  })
+                  continue
+
+              # Lightweight allowlist: top-level metadata key
+              # duplicate_trigger_guard:
+              #   allow_push_pr_overlap: true
+              #   reason: "intentional"
+              guard_meta = data.get("duplicate_trigger_guard", {}) if isinstance(data, dict) else {}
+              if isinstance(guard_meta, dict) and guard_meta.get("allow_push_pr_overlap") is True:
+                  continue
+
+              on_cfg = normalize_event_config(data.get("on") if isinstance(data, dict) else None)
+              if "push" not in on_cfg or "pull_request" not in on_cfg:
+                  continue
+
+              push_cfg = on_cfg.get("push") or {}
+              pr_cfg = on_cfg.get("pull_request") or {}
+              if not isinstance(push_cfg, dict):
+                  push_cfg = {}
+              if not isinstance(pr_cfg, dict):
+                  pr_cfg = {}
+
+              push_branches = set(to_list(push_cfg.get("branches")))
+              pr_branches = set(to_list(pr_cfg.get("branches")))
+
+              # If either side does not scope branches explicitly, it effectively overlaps broadly.
+              explicit_intersection = bool(push_branches and pr_branches and (push_branches & pr_branches))
+              broad_overlap = (not push_branches) or (not pr_branches)
+
+              if explicit_intersection or broad_overlap:
+                  violations.append({
+                      "file": wf,
+                      "reason": "Overlapping push and pull_request triggers can cause duplicate CI runs",
+                      "push_branches": sorted(push_branches) if push_branches else ["<all>"] ,
+                      "pull_request_branches": sorted(pr_branches) if pr_branches else ["<all>"],
+                      "allowlist_hint": "Set top-level duplicate_trigger_guard.allow_push_pr_overlap: true with a reason when intentional",
+                  })
+
+          if violations:
+              print("::error::Duplicate trigger guard found potential accidental overlaps:")
+              print(json.dumps(violations, indent=2))
+              sys.exit(1)
+
+          print("No duplicate trigger overlaps detected.")
+          PY
